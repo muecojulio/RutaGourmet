@@ -4,16 +4,19 @@
   --font-display: "Fraunces", "Iowan Old Style", Georgia, serif;
   --font-sans: "Outfit", "Avenir Next", system-ui, sans-serif;
 
-  --color-bg: #14110e;
-  --color-surface: #221c17;
-  --color-surface-2: #2c251f;
-  --color-fg: #f6f1e8;
-  --color-muted: #a89b8c;
-  --color-line: #3c332c;
+  /* Warm bistro at night — identity palette kept, enriched. */
+  --color-bg: #14100c;
+  --color-surface: #221b15;
+  --color-surface-2: #2d241c;
+  --color-fg: #f8f2e7;
+  --color-muted: #ab9d8c;
+  --color-line: #3d3229;
   --color-primary: #e07a45;
-  --color-primary-fg: #1c120c;
-  --color-accent: #c4b08a;
-  --color-good: #8fa67a;
+  --color-primary-fg: #1d120b;
+  --color-accent: #d9b380;
+  --color-good: #93ab7c;
+  --color-danger: #ef6a5a;
+  --color-saffron: #f0b429;
 
   --radius-card: 1.25rem;
 }
@@ -22,6 +25,14 @@
   color-scheme: dark;
   background: var(--color-bg);
   color: var(--color-fg);
+
+  /* Ambient light used by .backdrop-glow — candle-warm, not neon. */
+  --glow-1: rgb(224 122 69 / 0.16);
+  --glow-2: rgb(240 180 41 / 0.08);
+  --glow-3: rgb(147 171 124 / 0.07);
+  --shadow-card: 0 1px 2px rgb(0 0 0 / 0.28), 0 8px 24px -12px rgb(0 0 0 / 0.5);
+  --shadow-pop: 0 2px 4px rgb(0 0 0 / 0.3), 0 16px 40px -16px rgb(0 0 0 / 0.55);
+  --shadow-glow: 0 0 0 1px rgb(224 122 69 / 0.35), 0 8px 24px -8px rgb(224 122 69 / 0.35);
 }
 
 :root[data-theme="light"] {
@@ -36,6 +47,15 @@
   --color-primary-fg: #fff8f3;
   --color-accent: #8a6a3b;
   --color-good: #3f5344;
+  --color-danger: #c0392b;
+  --color-saffron: #b07908;
+
+  --glow-1: rgb(196 82 42 / 0.1);
+  --glow-2: rgb(176 121 8 / 0.08);
+  --glow-3: rgb(63 83 68 / 0.06);
+  --shadow-card: 0 1px 2px rgb(60 42 20 / 0.08), 0 10px 24px -14px rgb(60 42 20 / 0.28);
+  --shadow-pop: 0 2px 4px rgb(60 42 20 / 0.1), 0 18px 40px -18px rgb(60 42 20 / 0.35);
+  --shadow-glow: 0 0 0 1px rgb(196 82 42 / 0.25), 0 8px 24px -10px rgb(196 82 42 / 0.3);
 }
 
 @layer base {
@@ -51,6 +71,11 @@
     background: var(--color-bg);
     color: var(--color-fg);
     line-height: 1.5;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  ::selection {
+    background: color-mix(in srgb, var(--color-primary) 30%, transparent);
   }
 
   button:not(:disabled),
@@ -62,23 +87,94 @@
     cursor: not-allowed;
     opacity: 0.5;
   }
+
+  /* One consistent keyboard focus treatment everywhere (not color-only: the
+     ring is a shape change around the control). */
+  :where(a, button, input, textarea, select, summary, [tabindex]):focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: inherit;
+  }
 }
 
+/* ---------------------------------------------------------------------------
+ * Ambient backdrop — soft warm glows + a faint grain so large flat areas of
+ * the app read as "canvas", not "empty".
+ * ------------------------------------------------------------------------- */
+.backdrop-glow {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background:
+    radial-gradient(42rem 26rem at 12% -6%, var(--glow-1), transparent 62%),
+    radial-gradient(36rem 24rem at 96% 4%, var(--glow-2), transparent 60%),
+    radial-gradient(40rem 30rem at 50% 110%, var(--glow-3), transparent 64%);
+}
+
+.backdrop-glow::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix values='0 0 0 0 0.9 0 0 0 0 0.85 0 0 0 0 0.75 0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* ---------------------------------------------------------------------------
+ * Press feedback — the shared micro-interaction for every tappable control.
+ * Short, tangible, no bounce. `touch-action: manipulation` kills the ~300 ms
+ * tap highlight/zoom delay so controls respond crisply on touch.
+ * ------------------------------------------------------------------------- */
 .press {
+  touch-action: manipulation;
   transition:
-    transform 160ms ease,
-    background-color 160ms ease,
-    color 160ms ease,
-    border-color 160ms ease,
-    opacity 160ms ease;
+    transform 150ms cubic-bezier(0.2, 0.7, 0.3, 1),
+    background-color 150ms ease,
+    color 150ms ease,
+    border-color 150ms ease,
+    box-shadow 150ms ease,
+    opacity 150ms ease;
 }
 
 .press:active:not(:disabled) {
-  transform: scale(0.98);
+  transform: scale(0.97) translateY(0.5px);
 }
 
+/* Slightly deeper press for the big, primary actions. */
+.press-deep:active:not(:disabled) {
+  transform: scale(0.95) translateY(1px);
+}
+
+@media (hover: hover) {
+  .lift {
+    transition:
+      transform 180ms cubic-bezier(0.2, 0.7, 0.3, 1),
+      box-shadow 180ms ease,
+      border-color 180ms ease;
+  }
+
+  .lift:hover:not(:disabled) {
+    transform: translateY(-2px);
+    box-shadow: var(--shadow-pop);
+  }
+}
+
+/* ---------------------------------------------------------------------------
+ * Motion vocabulary — entrance, pop, shimmer, attention. Every animation is
+ * brief (≤ 320 ms) and disabled under prefers-reduced-motion (see bottom).
+ * ------------------------------------------------------------------------- */
 .rise {
-  animation: rise 220ms ease-out;
+  animation: rise 240ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+}
+
+/* Staggered children: the list applies --stagger-i to each child. */
+.stagger > * {
+  animation: rise 260ms cubic-bezier(0.2, 0.7, 0.3, 1) both;
+  animation-delay: calc(min(var(--stagger-i, 0), 8) * 28ms);
+}
+
+.pop-in {
+  animation: pop-in 260ms cubic-bezier(0.2, 0.9, 0.3, 1.2) both;
 }
 
 @keyframes rise {
@@ -92,10 +188,170 @@
   }
 }
 
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* Heart burst when a place becomes a favorite (one-shot, subtle). */
+.burst {
+  animation: burst 320ms cubic-bezier(0.2, 0.9, 0.3, 1.4);
+}
+
+@keyframes burst {
+  0% {
+    transform: scale(0.6);
+  }
+  55% {
+    transform: scale(1.25);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+/* Very discreet error shake — paired with text/icon, never color alone. */
+.wiggle {
+  animation: wiggle 280ms ease-in-out;
+}
+
+@keyframes wiggle {
+  0%,
+  100% {
+    transform: translateX(0);
+  }
+  25% {
+    transform: translateX(-3px);
+  }
+  50% {
+    transform: translateX(3px);
+  }
+  75% {
+    transform: translateX(-2px);
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    100deg,
+    transparent 32%,
+    color-mix(in srgb, var(--color-primary) 14%, transparent) 50%,
+    transparent 68%
+  );
+  background-size: 220% 100%;
+  animation: shimmer 1.4s linear infinite;
+}
+
+@keyframes shimmer {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+.pulse-soft {
+  animation: pulse-soft 2.4s ease-in-out infinite;
+}
+
+@keyframes pulse-soft {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.55;
+  }
+}
+
+.spin {
+  animation: spin 800ms linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+/* Section label with a rule — used above list sections for rhythm. */
+.rule-label {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--color-muted);
+}
+
+.rule-label::after {
+  content: "";
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(to right, var(--color-line), transparent);
+}
+
+/* ---------------------------------------------------------------------------
+ * Horizontal lanes — native scroll + moderate snap; the scrollbar is hidden
+ * visually only (scrolling itself is never intercepted).
+ * ------------------------------------------------------------------------- */
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
+.lane {
+  display: flex;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scroll-behavior: smooth;
+  -webkit-overflow-scrolling: touch;
+}
+
+.lane > * {
+  scroll-snap-align: start;
+}
+
+/* Faded edges shown only while content overflows on that side (the component
+   toggles data-can-left / data-can-right; see ui/chip-lane.tsx). */
+.edge-fade {
+  --edge-size: 1.5rem;
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--edge-size),
+    black calc(100% - var(--edge-size)),
+    transparent
+  );
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--edge, 0px),
+    black calc(100% - var(--edge-r, 0px)),
+    transparent 100%
+  );
+}
+
 .safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
 }
 
+/* ---------------------------------------------------------------------------
+ * Map pins (Leaflet divIcons) — kept from the original design.
+ * ------------------------------------------------------------------------- */
 .pin,
 .pin-origin,
 .pin-active {
@@ -208,12 +464,33 @@ summary {
   border: 0;
 }
 
+/* ---------------------------------------------------------------------------
+ * Reduced motion: drop decoration, keep information. Transitions and
+ * animations collapse to (almost) nothing; scrolling becomes instant. Scrolling
+ * and zoom are never blocked.
+ * ------------------------------------------------------------------------- */
 @media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+
   .rise,
-  .press,
-  .press:active:not(:disabled) {
-    animation: none;
-    transition: none;
+  .stagger > *,
+  .pop-in,
+  .burst,
+  .wiggle,
+  .shimmer,
+  .pulse-soft {
+    animation: none !important;
+  }
+
+  .press:active:not(:disabled),
+  .lift:hover:not(:disabled) {
     transform: none;
   }
 }

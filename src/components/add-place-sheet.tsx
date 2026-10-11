@@ -13,7 +13,13 @@ type AddPlaceSheetProps = {
   onOrigin: (hit: GeoHit) => void;
 };
 
-export function AddPlaceSheet({ open, onOpenChange, onSave, onRoute, onOrigin }: AddPlaceSheetProps) {
+export function AddPlaceSheet({
+  open,
+  onOpenChange,
+  onSave,
+  onRoute,
+  onOrigin,
+}: AddPlaceSheetProps) {
   return (
     <Sheet
       open={open}
@@ -38,7 +44,7 @@ export function AddPlaceSheet({ open, onOpenChange, onSave, onRoute, onOrigin }:
         placeholder="Tacos, café, mercado…"
       />
       <p className="mt-4 flex items-start gap-2 rounded-2xl border border-line bg-bg px-3 py-2 text-xs text-muted">
-        <Lightbulb className="mt-0.5 size-4 shrink-0 text-accent" />
+        <Lightbulb className="mt-0.5 size-4 shrink-0 text-accent" aria-hidden="true" />
         <span>
           Guardar deja el lugar en tus Lugares sin cerrar esta ventana; Cómo llegar lo guarda y te
           traza la ruta desde el punto de partida.
