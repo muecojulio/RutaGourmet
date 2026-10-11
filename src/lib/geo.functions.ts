@@ -1,41 +1,40 @@
 import { createServerFn } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
+import {
+  crow,
+  hitsFromNominatim,
+  hitsFromOverpass,
+  hitsFromPhoton,
+  labelFromReverse,
+  nominatimReverseUrl,
+  nominatimSearchUrl,
+  osrmUrls,
+  overpassQuery,
+  photonSearchUrl,
+  routeFromOsrm,
+  OVERPASS_MIRRORS,
+  type GeoHit,
+  type Ok,
+  type RoutePlan,
+  type TravelModeId,
+} from "./geo-core";
+
+export type { GeoHit, Ok, RoutePlan, RouteStep } from "./geo-core";
 
 const UA = "RutaGourmet/1.0 (personal gourmet routes; +https://github.com/muecojulio/RutaGourmet)";
 
+/** Only these hosts may be reached from a server function. */
 const HOSTS = new Set([
   "photon.komoot.io",
   "nominatim.openstreetmap.org",
   "router.project-osrm.org",
   "routing.openstreetmap.de",
-  "overpass.openstreetmap.fr",
-  "overpass.kumi.systems",
-  "overpass-api.de",
+  ...OVERPASS_MIRRORS.map((mirror) => new URL(mirror).host),
 ]);
 
 const lat = z.number().finite().gte(-90).lte(90);
 const lon = z.number().finite().gte(-180).lte(180);
-
-export type GeoHit = {
-  id: string;
-  name: string;
-  address: string;
-  lat: number;
-  lon: number;
-  category: string;
-};
-
-export type RouteStep = { text: string; distanceM: number };
-
-export type RoutePlan = {
-  distanceM: number;
-  durationS: number;
-  geometry: Array<[number, number]>;
-  steps: RouteStep[];
-};
-
-type Ok<T> = { ok: true; data: T } | { ok: false; error: string };
 
 const cache = new Map<string, { at: number; data: unknown }>();
 let windowStart = Date.now();
@@ -97,106 +96,12 @@ async function postForm(url: string, body: string): Promise<unknown> {
   return response.json();
 }
 
-const CATEGORY: Record<string, string> = {
-  restaurant: "Restaurante",
-  cafe: "Café",
-  fast_food: "Comida rápida",
-  bar: "Bar",
-  ice_cream: "Heladería",
-  biergarten: "Cervecería",
-  pub: "Pub",
-  food_court: "Comedor",
-};
-
-function categoryLabel(value?: string) {
-  if (!value) return "Lugar";
-  return CATEGORY[value] ?? "Lugar";
-}
-
-function addressFromPhoton(props: Record<string, string | undefined>) {
-  const street = [props.street, props.housenumber].filter(Boolean).join(" ");
-  const area = props.locality || props.district || props.city || props.state || "";
-  return [street, area].filter(Boolean).join(", ");
-}
-
-function hitsFromPhoton(payload: unknown): GeoHit[] {
-  const features = (payload as { features?: Array<Record<string, unknown>> }).features ?? [];
-  return features.slice(0, 8).map((feature) => {
-    const props = (feature.properties ?? {}) as Record<string, string | number | undefined>;
-    const coords = ((feature.geometry as { coordinates?: number[] })?.coordinates ?? [0, 0]) as number[];
-    const name = String(props.name || props.street || "Lugar");
-    const id = `osm-${props.osm_type ?? "x"}-${props.osm_id ?? name}`;
-    return {
-      id,
-      name,
-      address: addressFromPhoton(props as Record<string, string | undefined>),
-      lon: Number(coords[0]),
-      lat: Number(coords[1]),
-      category: categoryLabel(String(props.osm_value ?? "")),
-    };
-  }).filter((hit) => Number.isFinite(hit.lat) && Number.isFinite(hit.lon));
-}
-
-function crow(aLat: number, aLon: number, bLat: number, bLon: number) {
-  const toRad = (d: number) => (d * Math.PI) / 180;
-  const dLat = toRad(bLat - aLat);
-  const dLon = toRad(bLon - aLon);
-  const h =
-    Math.sin(dLat / 2) ** 2 +
-    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLon / 2) ** 2;
-  return 2 * 6371000 * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-const MODIFIER: Record<string, string> = {
-  left: "a la izquierda",
-  right: "a la derecha",
-  "slight left": "ligeramente a la izquierda",
-  "slight right": "ligeramente a la derecha",
-  "sharp left": "cerrado a la izquierda",
-  "sharp right": "cerrado a la derecha",
-  straight: "recto",
-  uturn: "en U",
-};
-
-function stepText(type: string, modifier: string | undefined, name: string) {
-  const mod = modifier ? (MODIFIER[modifier] ?? modifier) : "";
-  const street = name ? ` por ${name}` : "";
-  if (type === "depart") return `Empieza${street || " la ruta"}`;
-  if (type === "arrive") return "Llegaste al destino";
-  if (type === "roundabout" || type === "rotary") return `Toma la glorieta${street}`;
-  if (type === "turn" || type === "end of road") return `Gira ${mod}${street}`.replace(/\s+/g, " ").trim();
-  if (type === "merge") return `Incorpórate ${mod}${street}`.replace(/\s+/g, " ").trim();
-  if (type === "fork") return `En la bifurcación sigue ${mod}${street}`.replace(/\s+/g, " ").trim();
-  return `Sigue ${mod}${street}`.replace(/\s+/g, " ").trim();
-}
-
 async function searchPhoton(q: string, near?: { lat: number; lon: number }) {
-  const url = new URL("https://photon.komoot.io/api/");
-  url.searchParams.set("q", q);
-  url.searchParams.set("limit", "8");
-  url.searchParams.set("lang", "default");
-  if (near) {
-    url.searchParams.set("lat", String(near.lat));
-    url.searchParams.set("lon", String(near.lon));
-  }
-  return hitsFromPhoton(await fetchJson(url.toString()));
+  return hitsFromPhoton(await fetchJson(photonSearchUrl(q, near)));
 }
 
 async function searchNominatim(q: string) {
-  const url = new URL("https://nominatim.openstreetmap.org/search");
-  url.searchParams.set("q", q);
-  url.searchParams.set("format", "jsonv2");
-  url.searchParams.set("limit", "8");
-  url.searchParams.set("addressdetails", "1");
-  const rows = (await fetchJson(url.toString())) as Array<Record<string, string>>;
-  return rows.map((row) => ({
-    id: `nom-${row.place_id}`,
-    name: row.name || row.display_name.split(",")[0] || "Lugar",
-    address: row.display_name,
-    lat: Number(row.lat),
-    lon: Number(row.lon),
-    category: categoryLabel(row.type),
-  }));
+  return hitsFromNominatim(await fetchJson(nominatimSearchUrl(q)));
 }
 
 export const searchPlaces = createServerFn({ method: "GET" })
@@ -225,44 +130,17 @@ export const searchPlaces = createServerFn({ method: "GET" })
   });
 
 async function nearbyOverpass(point: { lat: number; lon: number }): Promise<GeoHit[]> {
-  const query = `[out:json][timeout:16];(node["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:1200,${point.lat},${point.lon});way["amenity"~"^(restaurant|cafe|fast_food|bar|ice_cream)$"](around:1200,${point.lat},${point.lon}););out center 30;`;
-  const mirrors = [
-    "https://overpass.openstreetmap.fr/api/interpreter",
-    "https://overpass.kumi.systems/api/interpreter",
-    "https://overpass-api.de/api/interpreter",
-  ];
-  let payload: { elements?: Array<Record<string, unknown>> } | null = null;
-  for (const mirror of mirrors) {
+  const body = `data=${encodeURIComponent(overpassQuery(point))}`;
+  for (const mirror of OVERPASS_MIRRORS) {
     try {
-      payload = (await postForm(mirror, `data=${encodeURIComponent(query)}`)) as {
-        elements?: Array<Record<string, unknown>>;
-      };
-      if (payload?.elements) break;
+      const payload = await postForm(mirror, body);
+      const hits = hitsFromOverpass(payload, point);
+      if (hits.length > 0) return hits;
     } catch {
-      payload = null;
+      // try the next mirror
     }
   }
-  if (!payload?.elements) return [];
-  const hits: GeoHit[] = [];
-  for (const element of payload.elements) {
-    const tags = (element.tags ?? {}) as Record<string, string>;
-    if (!tags.name) continue;
-    const center = (element.center ?? null) as { lat?: number; lon?: number } | null;
-    const y = typeof element.lat === "number" ? element.lat : center?.lat;
-    const x = typeof element.lon === "number" ? element.lon : center?.lon;
-    if (y == null || x == null) continue;
-    const street = [tags["addr:street"], tags["addr:housenumber"]].filter(Boolean).join(" ");
-    hits.push({
-      id: `osm-${element.type}-${element.id}`,
-      name: tags.name,
-      address: [street, tags["addr:suburb"] || tags["addr:city"] || ""].filter(Boolean).join(", "),
-      lat: y,
-      lon: x,
-      category: categoryLabel(tags.amenity),
-    });
-  }
-  hits.sort((a, b) => crow(point.lat, point.lon, a.lat, a.lon) - crow(point.lat, point.lon, b.lat, b.lon));
-  return hits.slice(0, 16);
+  return [];
 }
 
 export const nearbyPlaces = createServerFn({ method: "GET" })
@@ -295,46 +173,16 @@ export const reverseLabel = createServerFn({ method: "GET" })
     const cached = fromCache<{ label: string }>(key, 30 * 60_000);
     if (cached) return { ok: true, data: cached };
     try {
-      const url = new URL("https://nominatim.openstreetmap.org/reverse");
-      url.searchParams.set("format", "jsonv2");
-      url.searchParams.set("lat", String(data.lat));
-      url.searchParams.set("lon", String(data.lon));
-      url.searchParams.set("zoom", "16");
-      const row = (await fetchJson(url.toString())) as { address?: Record<string, string>; display_name?: string };
-      const address = row.address ?? {};
-      const label =
-        address.suburb ||
-        address.neighbourhood ||
-        address.quarter ||
-        address.city_district ||
-        address.city ||
-        address.town ||
-        "Tu ubicación";
-      const dataOut = { label };
-      remember(key, dataOut);
-      return { ok: true, data: dataOut };
+      const payload = await fetchJson(nominatimReverseUrl(data));
+      const out = { label: labelFromReverse(payload) };
+      remember(key, out);
+      return { ok: true, data: out };
     } catch {
-      return { ok: true, data: { label: "Tu ubicación" } };
+      // Not an answer, just a failure to name the spot: the caller falls back to
+      // the browser transport, which labels it "Tu ubicación" if that fails too.
+      return { ok: false, error: "No pude nombrar la ubicación." };
     }
   });
-
-const PROFILES = { foot: "foot", driving: "driving", bike: "bike" } as const;
-
-type RoutePayload = {
-  code?: string;
-  routes?: Array<{
-    distance: number;
-    duration: number;
-    geometry?: { coordinates?: Array<[number, number]> };
-    legs?: Array<{
-      steps?: Array<{
-        distance: number;
-        name?: string;
-        maneuver?: { type?: string; modifier?: string };
-      }>;
-    }>;
-  }>;
-};
 
 export const planRoute = createServerFn({ method: "GET" })
   .validator(
@@ -352,46 +200,26 @@ export const planRoute = createServerFn({ method: "GET" })
     const cached = fromCache<RoutePlan>(key, 10 * 60_000);
     if (cached) return { ok: true, data: cached };
     try {
-      const profile = PROFILES[data.mode];
-      const path = `${data.fromLon},${data.fromLat};${data.toLon},${data.toLat}?overview=full&geometries=geojson&steps=true`;
-      const urls = [
-        `https://router.project-osrm.org/route/v1/${profile}/${path}`,
-        data.mode === "driving"
-          ? `https://routing.openstreetmap.de/routed-car/route/v1/driving/${path}`
-          : data.mode === "bike"
-            ? `https://routing.openstreetmap.de/routed-bike/route/v1/bike/${path}`
-            : `https://routing.openstreetmap.de/routed-foot/route/v1/foot/${path}`,
-      ];
-      let payload: RoutePayload | null = null;
+      const mode = data.mode as TravelModeId;
+      const urls = osrmUrls(
+        { lat: data.fromLat, lon: data.fromLon },
+        { lat: data.toLat, lon: data.toLon },
+        mode,
+      );
+      let payload: unknown = null;
       for (const url of urls) {
         try {
-          const res = (await fetchJson(url)) as RoutePayload;
-          if (res?.code === "Ok" && res.routes?.[0]) {
+          const res = await fetchJson(url);
+          if (routeFromOsrm(res)) {
             payload = res;
             break;
           }
         } catch {
-          // ignore
+          // try the next mirror
         }
       }
-      const route = payload?.routes?.[0];
-      if (!route) {
-        return { ok: false, error: "No hay una ruta disponible entre esos puntos." };
-      }
-      const steps = (route.legs ?? [])
-        .flatMap((leg) => leg.steps ?? [])
-        .map((step) => ({
-          text: stepText(step.maneuver?.type ?? "continue", step.maneuver?.modifier, step.name ?? ""),
-          distanceM: step.distance,
-        }))
-        .filter((step) => step.text.length > 0)
-        .slice(0, 24);
-      const plan: RoutePlan = {
-        distanceM: route.distance,
-        durationS: route.duration,
-        geometry: (route.geometry?.coordinates ?? []).map(([x, y]) => [y, x]),
-        steps,
-      };
+      const plan = routeFromOsrm(payload);
+      if (!plan) return { ok: false, error: "No hay una ruta disponible entre esos puntos." };
       remember(key, plan);
       setResponseHeader("Cache-Control", "private, max-age=120");
       return { ok: true, data: plan };
