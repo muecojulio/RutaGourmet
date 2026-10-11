@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 export type TravelMode = "foot" | "driving" | "bike";
-export type AppTab = "mapa" | "lugares" | "favoritos" | "ajustes";
+export type AppTab = "mapa" | "lugares" | "favoritos" | "qr" | "privacidad" | "ajustes";
 
 export type Place = {
   id: string;
