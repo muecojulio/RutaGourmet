@@ -195,9 +195,12 @@ summary {
   border-bottom-color: var(--color-line) !important;
 }
 
-/* Clear the search panel that floats over the top edge of the map. */
+/* Clear the search panel that floats over the top edge of the map: the panel
+   ends around 150 px tall in its tallest resting state (search + start point +
+   the location note), so the zoom buttons start below that. Keep in sync with
+   the top panel in ruta-app.tsx. */
 .leaflet-top.leaflet-right {
-  margin-top: 9rem;
+  margin-top: 12rem;
 }
 
 .pin-wrap {

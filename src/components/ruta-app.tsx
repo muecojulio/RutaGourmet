@@ -11,10 +11,9 @@ import {
   Map as MapIcon,
   MapPin,
   Navigation,
+  Plus,
   QrCode,
   Route as RouteIcon,
-  Search,
-  Settings,
   ShieldCheck,
   Sun,
   Moon,
@@ -26,22 +25,12 @@ import { MapCanvas, type MapFocus } from "@/components/map-canvas";
 import type { MapInsets } from "@/lib/map-fit";
 import { QrDownloadPanel } from "@/components/qr-download-panel";
 import { PrivacyPanel } from "@/components/privacy-panel";
+import { PlaceFinder } from "@/components/place-finder";
+import { OriginSheet } from "@/components/origin-sheet";
+import { AddPlaceSheet } from "@/components/add-place-sheet";
 import { crowFlies, formatDistance, formatDuration } from "@/lib/format";
-import {
-  nearbyPlaces,
-  planRoute,
-  reverseLabel,
-  searchPlaces,
-  type GeoHit,
-  type RoutePlan,
-} from "@/lib/geo.functions";
-import {
-  activePlace,
-  usePlaces,
-  type AppTab,
-  type Place,
-  type TravelMode,
-} from "@/lib/places-store";
+import { planRoute, reverseLabel, type GeoHit, type RoutePlan } from "@/lib/geo";
+import { activePlace, usePlaces, type Place, type TravelMode } from "@/lib/places-store";
 import * as Switch from "@radix-ui/react-switch";
 
 const MODES: Array<{ id: TravelMode; label: string; icon: typeof Footprints }> = [
@@ -56,7 +45,6 @@ const TABS = [
   { id: "favoritos", label: "Favoritos", shortLabel: "Favoritos", icon: Heart },
   { id: "qr", label: "Descargar QR", shortLabel: "QR App", icon: QrCode },
   { id: "privacidad", label: "Privacidad", shortLabel: "Privacidad", icon: ShieldCheck },
-  { id: "ajustes", label: "Ajustes", shortLabel: "Ajustes", icon: Settings },
 ] as const;
 
 const FALLBACK_ORIGIN = {
@@ -87,29 +75,33 @@ export function RutaApp() {
   const [hydrated, setHydrated] = useState(false);
   const [locating, setLocating] = useState(false);
   const [geoNote, setGeoNote] = useState<string | null>(null);
-  const [query, setQuery] = useState("");
-  const [hits, setHits] = useState<GeoHit[]>([]);
-  const [searching, setSearching] = useState(false);
-  const [searchError, setSearchError] = useState<string | null>(null);
   const [plan, setPlan] = useState<RoutePlan | null>(null);
   const [routing, setRouting] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
   const [cardCompact, setCardCompact] = useState(false);
-  const [mapInsets, setMapInsets] = useState<MapInsets>({ top: 0, bottom: 0 });
+  const [mapInsets, setMapInsets] = useState<MapInsets>({ top: 0, bottom: 0, right: 0 });
   const [mapFocus, setMapFocus] = useState<MapFocus>("route");
   const [focusSeq, setFocusSeq] = useState(0);
+  const [resultsOpen, setResultsOpen] = useState(false);
+  const [originOpen, setOriginOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
 
   const mapWrapRef = useRef<HTMLDivElement | null>(null);
   const mapTopRef = useRef<HTMLDivElement | null>(null);
   const mapBottomRef = useRef<HTMLDivElement | null>(null);
+  const mapActionsRef = useRef<HTMLDivElement | null>(null);
 
   const place = activePlace(places, activeId);
   const placeId = place?.id ?? null;
+  const favorites = useMemo(() => places.filter((item) => item.favorite), [places]);
+  const visitedCount = places.filter((item) => item.visited).length;
 
   const requestFocus = useCallback((target: MapFocus) => {
     setMapFocus(target);
     setFocusSeq((n) => n + 1);
   }, []);
+
+  const handleResults = useCallback((count: number) => setResultsOpen(count > 0), []);
 
   useEffect(() => {
     let live = true;
@@ -143,17 +135,26 @@ export function RutaApp() {
       if (base.height < 1) return; // hidden on this tab: keep the last good numbers
       const topEdge = mapTopRef.current?.getBoundingClientRect().bottom;
       const bottomEdge = mapBottomRef.current?.getBoundingClientRect().top;
+      // The floating buttons are right-aligned, so the strip they cover runs
+      // from their left edge to the map's right edge.
+      const actionsEdge = mapActionsRef.current?.getBoundingClientRect().left;
       const next: MapInsets = {
         top: topEdge == null ? 0 : Math.max(0, Math.round(topEdge - base.top)),
         bottom: bottomEdge == null ? 0 : Math.max(0, Math.round(base.bottom - bottomEdge)),
+        right: actionsEdge == null ? 0 : Math.max(0, Math.round(base.right - actionsEdge)),
       };
-      setMapInsets((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next));
+      setMapInsets((prev) =>
+        prev.top === next.top && prev.bottom === next.bottom && prev.right === next.right
+          ? prev
+          : next,
+      );
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(box);
     if (mapTopRef.current) observer.observe(mapTopRef.current);
     if (mapBottomRef.current) observer.observe(mapBottomRef.current);
+    if (mapActionsRef.current) observer.observe(mapActionsRef.current);
     window.addEventListener("resize", measure);
     return () => {
       observer.disconnect();
@@ -172,7 +173,7 @@ export function RutaApp() {
   useEffect(() => {
     setMapFocus("route");
     setFocusSeq((n) => n + 1);
-  }, [placeId, origin?.lat, origin?.lon, mode, plan?.distanceM, cardCompact, tab]);
+  }, [placeId, origin?.lat, origin?.lon, mode, plan?.distanceM, cardCompact, resultsOpen, tab]);
 
   useEffect(() => {
     if (!hydrated || origin) return;
@@ -194,13 +195,11 @@ export function RutaApp() {
     setRouting(true);
     setRouteError(null);
     void planRoute({
-      data: {
-        fromLat: origin.lat,
-        fromLon: origin.lon,
-        toLat: placeLat,
-        toLon: placeLon,
-        mode,
-      },
+      fromLat: origin.lat,
+      fromLon: origin.lon,
+      toLat: placeLat,
+      toLon: placeLon,
+      mode,
     })
       .then((result) => {
         if (!live) return;
@@ -223,19 +222,6 @@ export function RutaApp() {
     };
   }, [origin, placeId, placeLat, placeLon, mode]);
 
-  useEffect(() => {
-    const q = query.trim();
-    if (q.length < 2) {
-      setHits([]);
-      setSearchError(null);
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      void runSearch(q);
-    }, 320);
-    return () => window.clearTimeout(timer);
-  }, [query, origin?.lat, origin?.lon]);
-
   const markers = useMemo(
     () =>
       places.map((item) => ({
@@ -254,7 +240,7 @@ export function RutaApp() {
     setGeoNote(null);
     if (!navigator.geolocation) {
       if (!usePlaces.getState().origin) setOrigin(FALLBACK_ORIGIN);
-      setGeoNote("Este dispositivo no compartió la ubicación. Partimos de la Roma Norte.");
+      setGeoNote("Sin GPS en este dispositivo; partimos de Roma Norte.");
       return;
     }
     setLocating(true);
@@ -264,7 +250,7 @@ export function RutaApp() {
           const next = { lat: pos.coords.latitude, lon: pos.coords.longitude };
           let label = "Tu ubicación";
           try {
-            const named = await reverseLabel({ data: next });
+            const named = await reverseLabel(next);
             if (named.ok) label = named.data.label;
           } catch {
             label = "Tu ubicación";
@@ -278,62 +264,11 @@ export function RutaApp() {
         setLocating(false);
         if (!usePlaces.getState().origin) setOrigin(FALLBACK_ORIGIN);
         if (!silentFallback || !usePlaces.getState().origin?.isDevice) {
-          setGeoNote(
-            "Ubicación no disponible. La partida queda en la Roma Norte; puedes cambiarla.",
-          );
+          setGeoNote("Sin permiso de ubicación; partida en Roma Norte.");
         }
       },
       { enableHighAccuracy: true, timeout: 9000, maximumAge: 45000 },
     );
-  }
-
-  async function runSearch(q: string) {
-    setSearching(true);
-    setSearchError(null);
-    try {
-      const here = usePlaces.getState().origin;
-      const result = await searchPlaces({
-        data: { q, ...(here ? { lat: here.lat, lon: here.lon } : {}) },
-      });
-      if (query.trim() !== q) return;
-      if (result.ok) {
-        const here = usePlaces.getState().origin;
-        let data = result.data;
-        if (here) {
-          const ranked = [...data].sort((a, b) => crowFlies(here, a) - crowFlies(here, b));
-          const close = ranked.filter((hit) => crowFlies(here, hit) < 60000);
-          data = close.length > 0 ? close : ranked.slice(0, 5);
-        }
-        setHits(data);
-      } else setSearchError(result.error);
-    } catch {
-      setSearchError("No se pudo buscar. Intenta de nuevo.");
-    } finally {
-      setSearching(false);
-    }
-  }
-
-  async function runNearby() {
-    const here = usePlaces.getState().origin;
-    if (!here) {
-      setSearchError("Primero elige un punto de partida.");
-      return;
-    }
-    setSearching(true);
-    setSearchError(null);
-    setQuery("");
-    try {
-      const result = await nearbyPlaces({ data: { lat: here.lat, lon: here.lon } });
-      if (result.ok) {
-        setHits(result.data);
-        if (result.data.length === 0)
-          setSearchError("No hay restaurantes marcados cerca de este punto.");
-      } else setSearchError(result.error);
-    } catch {
-      setSearchError("No pude consultar lugares cercanos.");
-    } finally {
-      setSearching(false);
-    }
   }
 
   function remember(hit: GeoHit, go: boolean) {
@@ -342,11 +277,7 @@ export function RutaApp() {
       .places.some((item) => item.id === hit.id || same(item, hit));
     savePlace(hit);
     if (go) {
-      setHits([]);
-      setQuery("");
-      toast.success(
-        already ? "Ruta hacia un lugar que ya tenías" : "Lugar guardado y ruta en camino",
-      );
+      toast.success(already ? "Ruta hacia un lugar que ya tenías" : "Lugar guardado y ruta en camino");
     } else {
       toast.success(already ? "Ya estaba en tus lugares" : "Lugar agregado");
     }
@@ -405,119 +336,70 @@ export function RutaApp() {
               insets={mapInsets}
               onMarker={(id) => setActive(id)}
             />
+
             <div ref={mapTopRef} className="pointer-events-none absolute inset-x-0 top-0 z-10 p-3">
-              <div className="pointer-events-auto">
-                <form
-                  className="rounded-3xl border border-line bg-surface p-2"
-                  onSubmit={(event) => {
-                    event.preventDefault();
-                    if (query.trim().length >= 2) void runSearch(query.trim());
-                  }}
-                >
-                  <div className="flex items-center gap-2">
-                    <div className="relative min-w-0 flex-1">
-                      <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
-                      <label className="sr-only" htmlFor="buscar-lugar">
-                        Agregar o buscar un lugar
-                      </label>
-                      <input
-                        id="buscar-lugar"
-                        value={query}
-                        onChange={(event) => setQuery(event.target.value)}
-                        placeholder="Agregar restaurante o lugar"
-                        className="h-11 w-full rounded-full border border-line bg-bg pr-3 pl-10 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        autoComplete="off"
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => void runNearby()}
-                      className="press h-11 shrink-0 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg"
-                    >
-                      Cerca
-                    </button>
-                  </div>
-                  <div className="mt-2 flex items-center gap-2 px-1">
-                    <MapPin className="size-4 shrink-0 text-good" />
-                    <p className="min-w-0 flex-1 truncate text-xs text-muted">
-                      {locating
-                        ? "Buscando tu ubicación…"
-                        : origin
-                          ? `Partida: ${origin.label}`
-                          : "Definir partida"}
+              <div className="pointer-events-auto rounded-3xl border border-line bg-surface p-2">
+                <PlaceFinder
+                  idPrefix="mapa"
+                  variant="bare"
+                  showNearby
+                  onSave={(hit) => remember(hit, false)}
+                  onPick={(hit) => remember(hit, true)}
+                  pickLabel="Cómo llegar"
+                  onOrigin={applyAsOrigin}
+                  onResults={handleResults}
+                />
+                <div className="mt-2 flex items-center gap-1 border-t border-line pt-2">
+                  <button
+                    type="button"
+                    onClick={() => setOriginOpen(true)}
+                    className="press flex min-w-0 flex-1 items-center gap-2 rounded-2xl px-2 py-1.5 text-left"
+                    data-testid="punto-de-partida"
+                  >
+                    <span className="pin-origin" aria-hidden="true" />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-[11px] tracking-wide text-muted uppercase">
+                        Punto de partida
+                      </span>
+                      <span className="block truncate text-sm font-medium">
+                        {locating
+                          ? "Buscando tu ubicación…"
+                          : origin
+                            ? origin.label
+                            : "Elegir de dónde sales"}
+                      </span>
+                    </span>
+                    <MapPin className="size-4 shrink-0 text-primary" />
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void locate(false)}
+                    aria-label="Usar mi ubicación como punto de partida"
+                    className="press grid size-10 shrink-0 place-items-center rounded-full border border-line text-good"
+                  >
+                    <LocateFixed className="size-4" />
+                  </button>
+                </div>
+                {geoNote ? (
+                  <div className="rise mt-1 flex items-start gap-2 border-t border-line px-2 pt-2 pb-1 text-xs text-muted">
+                    <MapPin className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden="true" />
+                    <p className="min-w-0 flex-1 line-clamp-2" title={geoNote}>
+                      {geoNote}
                     </p>
                     <button
                       type="button"
-                      onClick={() => void locate(false)}
-                      className="press inline-flex h-8 items-center gap-1 rounded-full px-2 text-xs font-medium text-primary"
-                    >
-                      <LocateFixed className="size-3.5" />
-                      Actualizar
-                    </button>
-                  </div>
-                </form>
-                {geoNote ? (
-                  <div className="rise mt-2 flex items-start gap-2 rounded-2xl border border-line bg-surface px-3 py-2 text-xs text-muted">
-                    <p className="min-w-0 flex-1">{geoNote}</p>
-                    <button
-                      type="button"
-                      className="press text-fg"
+                      className="press -mt-1 grid size-6 shrink-0 place-items-center rounded-full text-fg"
                       aria-label="Cerrar aviso"
                       onClick={() => setGeoNote(null)}
                     >
-                      <X className="size-4" />
+                      <X className="size-3.5" />
                     </button>
                   </div>
-                ) : null}
-                {searching ? (
-                  <p className="mt-2 px-2 text-xs text-muted">Buscando en el mapa…</p>
-                ) : null}
-                {searchError ? (
-                  <p className="mt-2 rounded-2xl bg-surface px-3 py-2 text-sm text-fg">
-                    {searchError}
-                  </p>
-                ) : null}
-                {hits.length > 0 ? (
-                  <ul className="rise mt-2 max-h-52 space-y-2 overflow-y-auto rounded-3xl border border-line bg-surface p-2">
-                    {hits.map((hit) => (
-                      <li key={hit.id} className="rounded-2xl bg-bg px-3 py-2">
-                        <p className="truncate text-sm font-medium">{hit.name}</p>
-                        <p className="truncate text-xs text-muted">
-                          {hit.category}
-                          {hit.address ? ` · ${hit.address}` : ""}
-                        </p>
-                        <div className="mt-2 flex flex-wrap gap-2">
-                          <button
-                            type="button"
-                            className="press h-9 rounded-full border border-line px-3 text-xs"
-                            onClick={() => applyAsOrigin(hit)}
-                          >
-                            Partida
-                          </button>
-                          <button
-                            type="button"
-                            className="press h-9 rounded-full border border-line px-3 text-xs"
-                            onClick={() => remember(hit, false)}
-                          >
-                            Guardar
-                          </button>
-                          <button
-                            type="button"
-                            className="press inline-flex h-9 items-center gap-1 rounded-full bg-primary px-3 text-xs font-medium text-primary-fg"
-                            onClick={() => remember(hit, true)}
-                          >
-                            <Navigation className="size-3.5" />
-                            Cómo llegar
-                          </button>
-                        </div>
-                      </li>
-                    ))}
-                  </ul>
                 ) : null}
               </div>
             </div>
 
-            {place && hits.length === 0 ? (
+            {place && !resultsOpen ? (
               <div
                 ref={mapBottomRef}
                 className="pointer-events-none absolute inset-x-0 bottom-0 z-10 p-3"
@@ -620,9 +502,7 @@ export function RutaApp() {
                       </label>
                       {plan && plan.steps.length > 0 ? (
                         <details className="mt-2">
-                          <summary className="text-sm font-medium text-primary">
-                            Indicaciones
-                          </summary>
+                          <summary className="text-sm font-medium text-primary">Indicaciones</summary>
                           <ol className="mt-2 space-y-2">
                             {plan.steps.map((step, index) => (
                               <li key={`${step.text}-${index}`} className="flex gap-2 text-sm">
@@ -655,35 +535,42 @@ export function RutaApp() {
               </div>
             ) : null}
 
-            {origin || place ? (
-              <div
-                className="pointer-events-none absolute right-3 z-10 flex flex-col items-end gap-2"
-                style={{ bottom: mapInsets.bottom + 12 }}
+            <div
+              ref={mapActionsRef}
+              className="pointer-events-none absolute right-3 z-10 flex flex-col items-end gap-2"
+              style={{ bottom: mapInsets.bottom + 12 }}
+            >
+              <button
+                type="button"
+                onClick={() => setAddOpen(true)}
+                className="press pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg shadow-md"
               >
-                {origin && place ? (
-                  <button
-                    type="button"
-                    onClick={() => requestFocus("route")}
-                    aria-pressed={mapFocus === "route"}
-                    className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
-                  >
-                    <RouteIcon className="size-4 text-primary" />
-                    Toda la ruta
-                  </button>
-                ) : null}
-                {origin ? (
-                  <button
-                    type="button"
-                    onClick={() => requestFocus("origin")}
-                    aria-pressed={mapFocus === "origin"}
-                    className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
-                  >
-                    <span className="pin-origin" aria-hidden="true" />
-                    Ver partida
-                  </button>
-                ) : null}
-              </div>
-            ) : null}
+                <Plus className="size-4" />
+                Agregar lugar
+              </button>
+              {origin && place ? (
+                <button
+                  type="button"
+                  onClick={() => requestFocus("route")}
+                  aria-pressed={mapFocus === "route"}
+                  className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
+                >
+                  <RouteIcon className="size-4 text-primary" />
+                  Toda la ruta
+                </button>
+              ) : null}
+              {origin ? (
+                <button
+                  type="button"
+                  onClick={() => requestFocus("origin")}
+                  aria-pressed={mapFocus === "origin"}
+                  className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
+                >
+                  <span className="pin-origin" aria-hidden="true" />
+                  Ver partida
+                </button>
+              ) : null}
+            </div>
           </div>
         </section>
 
@@ -692,27 +579,30 @@ export function RutaApp() {
         >
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
             {tab === "favoritos" ? (
-              <PlaceList
-                title="Favoritos"
-                intro="Los lugares que te gustaron se quedan en este teléfono."
-                empty="Todavía no hay favoritos. Abre un lugar y enciende el interruptor."
-                items={places.filter((item) => item.favorite)}
-                origin={origin}
-                onOpen={(id) => setActive(id)}
-                onFavorite={toggleFavorite}
-              />
+              <>
+                <PlaceList
+                  title="Favoritos"
+                  intro={
+                    places.length === 0
+                      ? "Los lugares que te gustaron se quedan en este teléfono."
+                      : `${favorites.length} de ${places.length} lugares, y ${visitedCount} ya visitados.`
+                  }
+                  empty="Todavía no hay favoritos. Abre un lugar en el mapa y enciende el interruptor, o toca el corazón de la lista."
+                  items={favorites}
+                  origin={origin}
+                  onOpen={(id) => setActive(id)}
+                  onFavorite={toggleFavorite}
+                />
+                <VisitedSuggestions
+                  places={places}
+                  onOpen={(id) => setActive(id)}
+                  onFavorite={toggleFavorite}
+                />
+              </>
             ) : tab === "qr" ? (
               <QrDownloadPanel />
             ) : tab === "privacidad" ? (
               <PrivacyPanel onNavigate={(target) => setTab(target)} />
-            ) : tab === "ajustes" ? (
-              <SettingsPanel
-                onLocate={() => void locate(false)}
-                locating={locating}
-                onNavigate={(target) => setTab(target)}
-                theme={theme}
-                onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
-              />
             ) : (
               <PlaceList
                 title="Lugares"
@@ -722,6 +612,7 @@ export function RutaApp() {
                 origin={origin}
                 onOpen={(id) => setActive(id)}
                 onFavorite={toggleFavorite}
+                onAdd={() => setAddOpen(true)}
                 showFilters
               />
             )}
@@ -752,6 +643,25 @@ export function RutaApp() {
           );
         })}
       </nav>
+
+      <OriginSheet
+        open={originOpen}
+        onOpenChange={setOriginOpen}
+        locating={locating}
+        onUseDevice={() => void locate(false)}
+        onPick={(hit) => {
+          applyAsOrigin(hit);
+          setOriginOpen(false);
+        }}
+        note={geoNote}
+      />
+      <AddPlaceSheet
+        open={addOpen}
+        onOpenChange={setAddOpen}
+        onSave={(hit) => remember(hit, false)}
+        onRoute={(hit) => remember(hit, true)}
+        onOrigin={applyAsOrigin}
+      />
     </div>
   );
 }
@@ -813,6 +723,61 @@ function ToggleRow({
   );
 }
 
+/**
+ * Marking a place as visited is the moment you know whether you liked it, so
+ * the Favoritos tab offers the ones that are still missing the heart.
+ */
+function VisitedSuggestions({
+  places,
+  onOpen,
+  onFavorite,
+}: {
+  places: Place[];
+  onOpen: (id: string) => void;
+  onFavorite: (id: string) => void;
+}) {
+  const pending = places.filter((item) => item.visited && !item.favorite);
+  if (pending.length === 0) return null;
+
+  return (
+    <section className="mt-6">
+      <h2 className="text-sm font-semibold tracking-wide text-muted uppercase">
+        Visitados que te pueden gustar
+      </h2>
+      <p className="mt-1 text-xs text-muted">
+        Ya fuiste. Si te gustaron, agrégalos a favoritos para tenerlos a mano.
+      </p>
+      <ul className="mt-3 space-y-2">
+        {pending.map((item) => (
+          <li
+            key={item.id}
+            className="flex items-center gap-3 rounded-2xl border border-line bg-surface p-3"
+          >
+            <button
+              type="button"
+              onClick={() => onOpen(item.id)}
+              className="min-w-0 flex-1 text-left"
+            >
+              <span className="block truncate text-sm font-medium">{item.name}</span>
+              <span className="block truncate text-xs text-muted">
+                {item.category} · Visitado
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => onFavorite(item.id)}
+              className="press inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-fg"
+            >
+              <Heart className="size-4" />
+              Favorito
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
+  );
+}
+
 function PlaceList({
   title,
   intro,
@@ -821,6 +786,7 @@ function PlaceList({
   origin,
   onOpen,
   onFavorite,
+  onAdd,
   showFilters = false,
 }: {
   title: string;
@@ -830,6 +796,7 @@ function PlaceList({
   origin: { lat: number; lon: number } | null;
   onOpen: (id: string) => void;
   onFavorite: (id: string) => void;
+  onAdd?: () => void;
   showFilters?: boolean;
 }) {
   const [filter, setFilter] = useState<"todos" | "pendientes" | "visitados">("todos");
@@ -843,6 +810,16 @@ function PlaceList({
     <div className="rise">
       <h1 className="font-display text-3xl leading-none">{title}</h1>
       <p className="mt-2 text-sm text-muted">{intro}</p>
+      {onAdd ? (
+        <button
+          type="button"
+          onClick={onAdd}
+          className="press mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-medium text-primary-fg"
+        >
+          <Plus className="size-4" />
+          Agregar lugar
+        </button>
+      ) : null}
       {showFilters ? (
         <div className="mt-4 flex gap-2">
           {(
@@ -913,100 +890,6 @@ function PlaceList({
           ))}
         </ul>
       )}
-    </div>
-  );
-}
-
-function SettingsPanel({
-  onLocate,
-  locating,
-  onNavigate,
-  theme,
-  onToggleTheme,
-}: {
-  onLocate: () => void;
-  locating: boolean;
-  onNavigate: (tab: AppTab) => void;
-  theme: "dark" | "light";
-  onToggleTheme: () => void;
-}) {
-  const origin = usePlaces((s) => s.origin);
-
-  return (
-    <div className="rise space-y-4">
-      <h1 className="font-display text-3xl leading-none">Ajustes</h1>
-      <p className="text-sm text-muted">Configuración local y preferencias de la aplicación.</p>
-
-      {/* Punto de partida */}
-      <section className="rounded-3xl border border-line bg-surface p-4">
-        <h2 className="font-medium">Punto de partida</h2>
-        <p className="mt-1 text-sm text-muted">
-          {origin ? origin.label : "Todavía no hay un origen"}
-        </p>
-        <button
-          type="button"
-          onClick={onLocate}
-          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg"
-        >
-          <LocateFixed className="size-4" />
-          {locating ? "Localizando…" : "Usar mi ubicación"}
-        </button>
-      </section>
-
-      {/* Apariencia */}
-      <section className="rounded-3xl border border-line bg-surface p-4">
-        <h2 className="font-medium">Apariencia</h2>
-        <p className="mt-1 text-sm text-muted">
-          Modo actual:{" "}
-          <span className="font-medium text-fg capitalize">
-            {theme === "dark" ? "Oscuro" : "Claro"}
-          </span>
-        </p>
-        <button
-          type="button"
-          onClick={onToggleTheme}
-          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg"
-        >
-          {theme === "dark" ? (
-            <Sun className="size-4 text-primary" />
-          ) : (
-            <Moon className="size-4 text-primary" />
-          )}
-          Cambiar a modo {theme === "dark" ? "claro" : "oscuro"}
-        </button>
-      </section>
-
-      {/* Acceso a Descargar QR */}
-      <section className="rounded-3xl border border-line bg-surface p-4">
-        <h2 className="font-medium">Descargar e Instalar</h2>
-        <p className="mt-1 text-sm text-muted">
-          Escanea el código QR para instalar RutaGourmet en tu iPhone, Android o computadora.
-        </p>
-        <button
-          type="button"
-          onClick={() => onNavigate("qr")}
-          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg hover:border-primary/40"
-        >
-          <QrCode className="size-4 text-primary" />
-          Abrir pestaña de QR / Descargar
-        </button>
-      </section>
-
-      {/* Acceso a Políticas de Privacidad */}
-      <section className="rounded-3xl border border-line bg-surface p-4">
-        <h2 className="font-medium">Políticas de privacidad</h2>
-        <p className="mt-1 text-sm text-muted">
-          Conoce cómo protegemos tus datos, nuestro modelo 100% local y la ausencia de rastreadores.
-        </p>
-        <button
-          type="button"
-          onClick={() => onNavigate("privacidad")}
-          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg hover:border-good/40"
-        >
-          <ShieldCheck className="size-4 text-good" />
-          Ver políticas de privacidad
-        </button>
-      </section>
     </div>
   );
 }

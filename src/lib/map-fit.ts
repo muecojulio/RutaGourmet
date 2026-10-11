@@ -9,7 +9,9 @@
  * the clamping rules stay testable without a browser.
  */
 
-export type MapInsets = { top: number; bottom: number };
+export type MapInsets = { top: number; bottom: number; right: number };
+/** The part of `MapInsets` the vertical clamp works on. */
+export type VerticalInsets = { top: number; bottom: number };
 export type MapSize = { width: number; height: number };
 
 /** `fitBounds` options that push Leaflet content away from the covered edges. */
@@ -31,9 +33,9 @@ export const FIT_MARGIN = 16;
  */
 export function clampInsets(
   size: MapSize,
-  insets: MapInsets,
+  insets: VerticalInsets,
   minBand = MIN_VISIBLE_BAND,
-): MapInsets {
+): VerticalInsets {
   const height = Number.isFinite(size.height) ? Math.max(0, size.height) : 0;
   const top = Number.isFinite(insets.top) ? Math.max(0, insets.top) : 0;
   const bottom = Number.isFinite(insets.bottom) ? Math.max(0, insets.bottom) : 0;
@@ -46,10 +48,21 @@ export function clampInsets(
 }
 
 /**
+ * How much of the right edge the floating buttons may claim: enough for the
+ * widest control, never more than a third of the map. A wider strip would push
+ * the fitted route into a sliver on phones.
+ */
+export function clampRight(size: MapSize, right: number): number {
+  const width = Number.isFinite(size.width) ? Math.max(0, size.width) : 0;
+  const value = Number.isFinite(right) ? Math.max(0, right) : 0;
+  return Math.min(value, Math.round(width / 3));
+}
+
+/**
  * Leaflet `fitBounds` options for the visible strip. Passing `maxZoom` matters:
  * with a single point (degenerate bounds) Leaflet bails out of `fitBounds`
  * unless a finite max zoom is given, and only then does it honour the padding
- * offset that several these panels need.
+ * offset that several of these panels need.
  */
 export function fitPadding(
   size: MapSize,
@@ -58,8 +71,11 @@ export function fitPadding(
   minBand = MIN_VISIBLE_BAND,
 ): FitPadding {
   const clamped = clampInsets(size, insets, minBand);
+  const right = clampRight(size, insets.right ?? 0);
   return {
     paddingTopLeft: [margin, clamped.top + margin],
-    paddingBottomRight: [margin, clamped.bottom + margin],
+    // Leaflet pads the bottom-right corner: the buttons on that edge and the
+    // card at the bottom share it, so the wider of the two decides.
+    paddingBottomRight: [Math.max(margin, right + margin), clamped.bottom + margin],
   };
 }
