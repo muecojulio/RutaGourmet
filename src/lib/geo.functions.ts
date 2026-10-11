@@ -320,6 +320,22 @@ export const reverseLabel = createServerFn({ method: "GET" })
 
 const PROFILES = { foot: "foot", driving: "driving", bike: "bike" } as const;
 
+type RoutePayload = {
+  code?: string;
+  routes?: Array<{
+    distance: number;
+    duration: number;
+    geometry?: { coordinates?: Array<[number, number]> };
+    legs?: Array<{
+      steps?: Array<{
+        distance: number;
+        name?: string;
+        maneuver?: { type?: string; modifier?: string };
+      }>;
+    }>;
+  }>;
+};
+
 export const planRoute = createServerFn({ method: "GET" })
   .validator(
     z.object({
@@ -346,28 +362,16 @@ export const planRoute = createServerFn({ method: "GET" })
             ? `https://routing.openstreetmap.de/routed-bike/route/v1/bike/${path}`
             : `https://routing.openstreetmap.de/routed-foot/route/v1/foot/${path}`,
       ];
-      let payload: {
-        code?: string;
-        routes?: Array<{
-          distance: number;
-          duration: number;
-          geometry?: { coordinates?: Array<[number, number]> };
-          legs?: Array<{
-            steps?: Array<{
-              distance: number;
-              name?: string;
-              maneuver?: { type?: string; modifier?: string };
-            }>;
-          }>;
-        }>;
-      } | null = null;
+      let payload: RoutePayload | null = null;
       for (const url of urls) {
         try {
-          payload = (await fetchJson(url)) as NonNullable<typeof payload>;
-          if (payload?.code === "Ok" && payload.routes?.[0]) break;
-          payload = null;
+          const res = (await fetchJson(url)) as RoutePayload;
+          if (res?.code === "Ok" && res.routes?.[0]) {
+            payload = res;
+            break;
+          }
         } catch {
-          payload = null;
+          // ignore
         }
       }
       const route = payload?.routes?.[0];

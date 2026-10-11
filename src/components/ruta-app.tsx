@@ -9,8 +9,10 @@ import {
   Map as MapIcon,
   MapPin,
   Navigation,
+  QrCode,
   Search,
   Settings,
+  ShieldCheck,
   Sun,
   Moon,
   Trash2,
@@ -18,9 +20,11 @@ import {
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { MapCanvas } from "@/components/map-canvas";
+import { QrDownloadPanel } from "@/components/qr-download-panel";
+import { PrivacyPanel } from "@/components/privacy-panel";
 import { crowFlies, formatDistance, formatDuration } from "@/lib/format";
 import { nearbyPlaces, planRoute, reverseLabel, searchPlaces, type GeoHit, type RoutePlan } from "@/lib/geo.functions";
-import { activePlace, usePlaces, type Place, type TravelMode } from "@/lib/places-store";
+import { activePlace, usePlaces, type AppTab, type Place, type TravelMode } from "@/lib/places-store";
 import * as Switch from "@radix-ui/react-switch";
 
 const MODES: Array<{ id: TravelMode; label: string; icon: typeof Footprints }> = [
@@ -30,10 +34,12 @@ const MODES: Array<{ id: TravelMode; label: string; icon: typeof Footprints }> =
 ];
 
 const TABS = [
-  { id: "mapa", label: "Mapa", icon: MapIcon },
-  { id: "lugares", label: "Lugares", icon: Bookmark },
-  { id: "favoritos", label: "Favoritos", icon: Heart },
-  { id: "ajustes", label: "Ajustes", icon: Settings },
+  { id: "mapa", label: "Mapa", shortLabel: "Mapa", icon: MapIcon },
+  { id: "lugares", label: "Lugares", shortLabel: "Lugares", icon: Bookmark },
+  { id: "favoritos", label: "Favoritos", shortLabel: "Favoritos", icon: Heart },
+  { id: "qr", label: "Descargar QR", shortLabel: "QR App", icon: QrCode },
+  { id: "privacidad", label: "Privacidad", shortLabel: "Privacidad", icon: ShieldCheck },
+  { id: "ajustes", label: "Ajustes", shortLabel: "Ajustes", icon: Settings },
 ] as const;
 
 const FALLBACK_ORIGIN = {
@@ -267,7 +273,7 @@ export function RutaApp() {
     }
   }
 
-  function useAsOrigin(hit: GeoHit) {
+  function applyAsOrigin(hit: GeoHit) {
     setOrigin({ lat: hit.lat, lon: hit.lon, label: hit.name, isDevice: false });
     setGeoNote(null);
     toast.success("Punto de partida actualizado");
@@ -377,7 +383,7 @@ export function RutaApp() {
                           {hit.address ? ` · ${hit.address}` : ""}
                         </p>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <button type="button" className="press h-9 rounded-full border border-line px-3 text-xs" onClick={() => useAsOrigin(hit)}>
+                          <button type="button" className="press h-9 rounded-full border border-line px-3 text-xs" onClick={() => applyAsOrigin(hit)}>
                             Partida
                           </button>
                           <button type="button" className="press h-9 rounded-full border border-line px-3 text-xs" onClick={() => remember(hit, false)}>
@@ -497,7 +503,7 @@ export function RutaApp() {
           </div>
         </section>
 
-        <aside className={`${tab === "mapa" ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-line bg-bg md:w-96 md:border-l`}>
+        <aside className={`${tab === "mapa" ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-line bg-bg md:w-96 lg:w-[410px] md:border-l`}>
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
             {tab === "favoritos" ? (
               <PlaceList
@@ -509,8 +515,18 @@ export function RutaApp() {
                 onOpen={(id) => setActive(id)}
                 onFavorite={toggleFavorite}
               />
+            ) : tab === "qr" ? (
+              <QrDownloadPanel />
+            ) : tab === "privacidad" ? (
+              <PrivacyPanel onNavigate={(target) => setTab(target)} />
             ) : tab === "ajustes" ? (
-              <SettingsPanel onLocate={() => void locate(false)} locating={locating} />
+              <SettingsPanel
+                onLocate={() => void locate(false)}
+                locating={locating}
+                onNavigate={(target) => setTab(target)}
+                theme={theme}
+                onToggleTheme={() => setTheme(theme === "dark" ? "light" : "dark")}
+              />
             ) : (
               <PlaceList
                 title="Lugares"
@@ -536,11 +552,13 @@ export function RutaApp() {
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
-              className={`press flex h-16 flex-1 flex-col items-center justify-center gap-1 text-xs ${on ? "text-primary" : "text-muted"}`}
+              className={`press flex h-16 flex-1 min-w-0 flex-col items-center justify-center gap-1 text-[11px] sm:text-xs ${
+                on ? "text-primary font-semibold" : "text-muted"
+              }`}
               aria-current={on ? "page" : undefined}
             >
-              <Icon className="size-5" />
-              {item.label}
+              <Icon className="size-5 shrink-0" />
+              <span className="truncate max-w-full px-0.5">{item.shortLabel}</span>
             </button>
           );
         })}
@@ -700,86 +718,86 @@ function PlaceList({
   );
 }
 
-function SettingsPanel({ onLocate, locating }: { onLocate: () => void; locating: boolean }) {
+function SettingsPanel({
+  onLocate,
+  locating,
+  onNavigate,
+  theme,
+  onToggleTheme,
+}: {
+  onLocate: () => void;
+  locating: boolean;
+  onNavigate: (tab: AppTab) => void;
+  theme: "dark" | "light";
+  onToggleTheme: () => void;
+}) {
   const origin = usePlaces((s) => s.origin);
-  const clearAll = usePlaces((s) => s.clearAll);
-  const [armed, setArmed] = useState(false);
-  const [policy, setPolicy] = useState(false);
 
   return (
     <div className="rise space-y-4">
       <h1 className="font-display text-3xl leading-none">Ajustes</h1>
-      <p className="text-sm text-muted">La app se instala en el teléfono y guarda tus lugares aquí, no en una cuenta.</p>
+      <p className="text-sm text-muted">Configuración local y preferencias de la aplicación.</p>
 
+      {/* Punto de partida */}
       <section className="rounded-3xl border border-line bg-surface p-4">
         <h2 className="font-medium">Punto de partida</h2>
         <p className="mt-1 text-sm text-muted">{origin ? origin.label : "Todavía no hay un origen"}</p>
-        <button type="button" onClick={onLocate} className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg">
+        <button
+          type="button"
+          onClick={onLocate}
+          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg"
+        >
           <LocateFixed className="size-4" />
           {locating ? "Localizando…" : "Usar mi ubicación"}
         </button>
       </section>
 
+      {/* Apariencia */}
       <section className="rounded-3xl border border-line bg-surface p-4">
-        <h2 className="font-medium">Instalar en el iPhone</h2>
-        <ol className="mt-2 list-decimal space-y-1 pl-5 text-sm text-muted">
-          <li>Abre RutaGourmet en Safari.</li>
-          <li>Toca Compartir.</li>
-          <li>Elige Agregar a inicio.</li>
-        </ol>
-        <a href="/?install=1&platform=ios" className="press mt-3 inline-flex h-11 items-center rounded-full border border-line px-4 text-sm font-medium">
-          Ver guía de instalación
-        </a>
-      </section>
-
-      <section className="rounded-3xl border border-line bg-surface p-4">
-        <button type="button" className="press flex w-full items-center justify-between text-left" onClick={() => setPolicy((v) => !v)} aria-expanded={policy}>
-          <h2 className="font-medium">Política de privacidad</h2>
-          <span className="text-sm text-primary">{policy ? "Ocultar" : "Leer"}</span>
+        <h2 className="font-medium">Apariencia</h2>
+        <p className="mt-1 text-sm text-muted">
+          Modo actual: <span className="font-medium text-fg capitalize">{theme === "dark" ? "Oscuro" : "Claro"}</span>
+        </p>
+        <button
+          type="button"
+          onClick={onToggleTheme}
+          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg"
+        >
+          {theme === "dark" ? <Sun className="size-4 text-primary" /> : <Moon className="size-4 text-primary" />}
+          Cambiar a modo {theme === "dark" ? "claro" : "oscuro"}
         </button>
-        {policy ? (
-          <div className="mt-3 space-y-3 text-sm text-muted">
-            <p>RutaGourmet no pide cuenta ni nombre. Tus lugares, favoritos, notas y el punto de partida se guardan solo en este teléfono.</p>
-            <p>Cuando buscas un sitio o pides una ruta, esa consulta sale de tu teléfono hacia OpenStreetMap (Photon y Nominatim) y hacia el enrutador público OSRM, únicamente para devolver el lugar o el camino. No se vende, no se manda a redes publicitarias y no se guarda en una base de datos nuestra.</p>
-            <p>La misma consulta puede quedar unos minutos en la memoria del servidor para no repetirla. No se asocia a una identidad. El mapa usa teselas de CARTO y OpenStreetMap.</p>
-            <p>No conectamos esta app a Zapier, Hugging Face ni rastreadores: enviar tu ubicación a esos servicios no aporta a la ruta y ampliaría quién ve ese dato.</p>
-            <p>
-              Mapas ©{" "}
-              <a className="text-primary" href="https://www.openstreetmap.org/copyright" target="_blank" rel="noreferrer">
-                OpenStreetMap
-              </a>
-              .
-            </p>
-          </div>
-        ) : null}
       </section>
 
+      {/* Acceso a Descargar QR */}
       <section className="rounded-3xl border border-line bg-surface p-4">
-        <h2 className="font-medium">Borrar datos de este teléfono</h2>
-        <p className="mt-1 text-sm text-muted">Quita lugares, favoritos y notas. No se puede deshacer.</p>
-        {armed ? (
-          <div className="mt-3 flex gap-2">
-            <button
-              type="button"
-              className="press h-11 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg"
-              onClick={() => {
-                clearAll();
-                setArmed(false);
-                toast.success("Datos locales borrados");
-              }}
-            >
-              Confirmar borrado
-            </button>
-            <button type="button" className="press h-11 rounded-full border border-line px-4 text-sm" onClick={() => setArmed(false)}>
-              Cancelar
-            </button>
-          </div>
-        ) : (
-          <button type="button" className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line px-4 text-sm" onClick={() => setArmed(true)}>
-            <Trash2 className="size-4" />
-            Borrar mis lugares
-          </button>
-        )}
+        <h2 className="font-medium">Descargar e Instalar</h2>
+        <p className="mt-1 text-sm text-muted">
+          Escanea el código QR para instalar RutaGourmet en tu iPhone, Android o computadora.
+        </p>
+        <button
+          type="button"
+          onClick={() => onNavigate("qr")}
+          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg hover:border-primary/40"
+        >
+          <QrCode className="size-4 text-primary" />
+          Abrir pestaña de QR / Descargar
+        </button>
+      </section>
+
+      {/* Acceso a Políticas de Privacidad */}
+      <section className="rounded-3xl border border-line bg-surface p-4">
+        <h2 className="font-medium">Políticas de privacidad</h2>
+        <p className="mt-1 text-sm text-muted">
+          Conoce cómo protegemos tus datos, nuestro modelo 100% local y la ausencia de rastreadores.
+        </p>
+        <button
+          type="button"
+          onClick={() => onNavigate("privacidad")}
+          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg hover:border-good/40"
+        >
+          <ShieldCheck className="size-4 text-good" />
+          Ver políticas de privacidad
+        </button>
       </section>
     </div>
   );
