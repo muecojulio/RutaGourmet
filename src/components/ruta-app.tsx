@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bike,
   Bookmark,
   Car,
+  ChevronDown,
+  ChevronUp,
   Footprints,
   Heart,
   LocateFixed,
@@ -10,6 +12,7 @@ import {
   MapPin,
   Navigation,
   QrCode,
+  Route as RouteIcon,
   Search,
   Settings,
   ShieldCheck,
@@ -19,12 +22,26 @@ import {
   X,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
-import { MapCanvas } from "@/components/map-canvas";
+import { MapCanvas, type MapFocus } from "@/components/map-canvas";
+import type { MapInsets } from "@/lib/map-fit";
 import { QrDownloadPanel } from "@/components/qr-download-panel";
 import { PrivacyPanel } from "@/components/privacy-panel";
 import { crowFlies, formatDistance, formatDuration } from "@/lib/format";
-import { nearbyPlaces, planRoute, reverseLabel, searchPlaces, type GeoHit, type RoutePlan } from "@/lib/geo.functions";
-import { activePlace, usePlaces, type AppTab, type Place, type TravelMode } from "@/lib/places-store";
+import {
+  nearbyPlaces,
+  planRoute,
+  reverseLabel,
+  searchPlaces,
+  type GeoHit,
+  type RoutePlan,
+} from "@/lib/geo.functions";
+import {
+  activePlace,
+  usePlaces,
+  type AppTab,
+  type Place,
+  type TravelMode,
+} from "@/lib/places-store";
 import * as Switch from "@radix-ui/react-switch";
 
 const MODES: Array<{ id: TravelMode; label: string; icon: typeof Footprints }> = [
@@ -77,8 +94,22 @@ export function RutaApp() {
   const [plan, setPlan] = useState<RoutePlan | null>(null);
   const [routing, setRouting] = useState(false);
   const [routeError, setRouteError] = useState<string | null>(null);
+  const [cardCompact, setCardCompact] = useState(false);
+  const [mapInsets, setMapInsets] = useState<MapInsets>({ top: 0, bottom: 0 });
+  const [mapFocus, setMapFocus] = useState<MapFocus>("route");
+  const [focusSeq, setFocusSeq] = useState(0);
+
+  const mapWrapRef = useRef<HTMLDivElement | null>(null);
+  const mapTopRef = useRef<HTMLDivElement | null>(null);
+  const mapBottomRef = useRef<HTMLDivElement | null>(null);
 
   const place = activePlace(places, activeId);
+  const placeId = place?.id ?? null;
+
+  const requestFocus = useCallback((target: MapFocus) => {
+    setMapFocus(target);
+    setFocusSeq((n) => n + 1);
+  }, []);
 
   useEffect(() => {
     let live = true;
@@ -101,6 +132,48 @@ export function RutaApp() {
     if (meta && bg) meta.setAttribute("content", bg);
   }, [theme]);
 
+  // How much of the map the floating panels cover. Re-synced after every render
+  // (panels mount, unmount and change height as the user types, searches or
+  // opens a card), so the route fit below never hides under them.
+  useEffect(() => {
+    const box = mapWrapRef.current;
+    if (!box) return;
+    const measure = () => {
+      const base = box.getBoundingClientRect();
+      if (base.height < 1) return; // hidden on this tab: keep the last good numbers
+      const topEdge = mapTopRef.current?.getBoundingClientRect().bottom;
+      const bottomEdge = mapBottomRef.current?.getBoundingClientRect().top;
+      const next: MapInsets = {
+        top: topEdge == null ? 0 : Math.max(0, Math.round(topEdge - base.top)),
+        bottom: bottomEdge == null ? 0 : Math.max(0, Math.round(base.bottom - bottomEdge)),
+      };
+      setMapInsets((prev) => (prev.top === next.top && prev.bottom === next.bottom ? prev : next));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(box);
+    if (mapTopRef.current) observer.observe(mapTopRef.current);
+    if (mapBottomRef.current) observer.observe(mapBottomRef.current);
+    window.addEventListener("resize", measure);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", measure);
+    };
+  });
+
+  // A card always opens with its details showing.
+  useEffect(() => {
+    setCardCompact(false);
+  }, [placeId]);
+
+  // Anything that moves the route — a new place, a new start point, another
+  // travel mode, the card opening or folding, or coming back to the Mapa tab —
+  // asks the map to frame it again.
+  useEffect(() => {
+    setMapFocus("route");
+    setFocusSeq((n) => n + 1);
+  }, [placeId, origin?.lat, origin?.lon, mode, plan?.distanceM, cardCompact, tab]);
+
   useEffect(() => {
     if (!hydrated || origin) return;
     locate(true);
@@ -108,7 +181,6 @@ export function RutaApp() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [hydrated, origin]);
 
-  const placeId = place?.id ?? null;
   const placeLat = place?.lat;
   const placeLon = place?.lon;
 
@@ -176,7 +248,7 @@ export function RutaApp() {
     [places, activeId],
   );
 
-  const focusKey = `${origin?.lat ?? "x"}:${origin?.lon ?? "x"}:${place?.id ?? "none"}:${mode}:${plan?.distanceM ?? 0}`;
+  const focusKey = `${mapFocus}:${focusSeq}`;
 
   async function locate(silentFallback: boolean) {
     setGeoNote(null);
@@ -206,7 +278,9 @@ export function RutaApp() {
         setLocating(false);
         if (!usePlaces.getState().origin) setOrigin(FALLBACK_ORIGIN);
         if (!silentFallback || !usePlaces.getState().origin?.isDevice) {
-          setGeoNote("Ubicación no disponible. La partida queda en la Roma Norte; puedes cambiarla.");
+          setGeoNote(
+            "Ubicación no disponible. La partida queda en la Roma Norte; puedes cambiarla.",
+          );
         }
       },
       { enableHighAccuracy: true, timeout: 9000, maximumAge: 45000 },
@@ -252,7 +326,8 @@ export function RutaApp() {
       const result = await nearbyPlaces({ data: { lat: here.lat, lon: here.lon } });
       if (result.ok) {
         setHits(result.data);
-        if (result.data.length === 0) setSearchError("No hay restaurantes marcados cerca de este punto.");
+        if (result.data.length === 0)
+          setSearchError("No hay restaurantes marcados cerca de este punto.");
       } else setSearchError(result.error);
     } catch {
       setSearchError("No pude consultar lugares cercanos.");
@@ -262,12 +337,16 @@ export function RutaApp() {
   }
 
   function remember(hit: GeoHit, go: boolean) {
-    const already = usePlaces.getState().places.some((item) => item.id === hit.id || same(item, hit));
+    const already = usePlaces
+      .getState()
+      .places.some((item) => item.id === hit.id || same(item, hit));
     savePlace(hit);
     if (go) {
       setHits([]);
       setQuery("");
-      toast.success(already ? "Ruta hacia un lugar que ya tenías" : "Lugar guardado y ruta en camino");
+      toast.success(
+        already ? "Ruta hacia un lugar que ya tenías" : "Lugar guardado y ruta en camino",
+      );
     } else {
       toast.success(already ? "Ya estaba en tus lugares" : "Lugar agregado");
     }
@@ -291,7 +370,13 @@ export function RutaApp() {
         </div>
         <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Secciones">
           {TABS.map((item) => (
-            <TabButton key={item.id} active={tab === item.id} label={item.label} icon={item.icon} onClick={() => setTab(item.id)} />
+            <TabButton
+              key={item.id}
+              active={tab === item.id}
+              label={item.label}
+              icon={item.icon}
+              onClick={() => setTab(item.id)}
+            />
           ))}
         </nav>
         <button
@@ -305,18 +390,22 @@ export function RutaApp() {
       </header>
 
       <div className="flex min-h-0 flex-1">
-        <section className={`${tab === "mapa" ? "flex" : "hidden md:flex"} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}>
-          <div className="relative min-h-0 flex-1 overflow-hidden">
+        <section
+          className={`${tab === "mapa" ? "flex" : "hidden md:flex"} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}
+        >
+          <div ref={mapWrapRef} className="relative min-h-0 flex-1 overflow-hidden">
             <MapCanvas
               theme={theme}
               origin={origin}
               destination={place}
               route={plan?.geometry ?? null}
               markers={markers}
+              focus={mapFocus}
               focusKey={focusKey}
+              insets={mapInsets}
               onMarker={(id) => setActive(id)}
             />
-            <div className="pointer-events-none absolute inset-x-0 top-0 z-10 p-3">
+            <div ref={mapTopRef} className="pointer-events-none absolute inset-x-0 top-0 z-10 p-3">
               <div className="pointer-events-auto">
                 <form
                   className="rounded-3xl border border-line bg-surface p-2"
@@ -351,7 +440,11 @@ export function RutaApp() {
                   <div className="mt-2 flex items-center gap-2 px-1">
                     <MapPin className="size-4 shrink-0 text-good" />
                     <p className="min-w-0 flex-1 truncate text-xs text-muted">
-                      {locating ? "Buscando tu ubicación…" : origin ? `Partida: ${origin.label}` : "Definir partida"}
+                      {locating
+                        ? "Buscando tu ubicación…"
+                        : origin
+                          ? `Partida: ${origin.label}`
+                          : "Definir partida"}
                     </p>
                     <button
                       type="button"
@@ -366,13 +459,24 @@ export function RutaApp() {
                 {geoNote ? (
                   <div className="rise mt-2 flex items-start gap-2 rounded-2xl border border-line bg-surface px-3 py-2 text-xs text-muted">
                     <p className="min-w-0 flex-1">{geoNote}</p>
-                    <button type="button" className="press text-fg" aria-label="Cerrar aviso" onClick={() => setGeoNote(null)}>
+                    <button
+                      type="button"
+                      className="press text-fg"
+                      aria-label="Cerrar aviso"
+                      onClick={() => setGeoNote(null)}
+                    >
                       <X className="size-4" />
                     </button>
                   </div>
                 ) : null}
-                {searching ? <p className="mt-2 px-2 text-xs text-muted">Buscando en el mapa…</p> : null}
-                {searchError ? <p className="mt-2 rounded-2xl bg-surface px-3 py-2 text-sm text-fg">{searchError}</p> : null}
+                {searching ? (
+                  <p className="mt-2 px-2 text-xs text-muted">Buscando en el mapa…</p>
+                ) : null}
+                {searchError ? (
+                  <p className="mt-2 rounded-2xl bg-surface px-3 py-2 text-sm text-fg">
+                    {searchError}
+                  </p>
+                ) : null}
                 {hits.length > 0 ? (
                   <ul className="rise mt-2 max-h-52 space-y-2 overflow-y-auto rounded-3xl border border-line bg-surface p-2">
                     {hits.map((hit) => (
@@ -383,10 +487,18 @@ export function RutaApp() {
                           {hit.address ? ` · ${hit.address}` : ""}
                         </p>
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <button type="button" className="press h-9 rounded-full border border-line px-3 text-xs" onClick={() => applyAsOrigin(hit)}>
+                          <button
+                            type="button"
+                            className="press h-9 rounded-full border border-line px-3 text-xs"
+                            onClick={() => applyAsOrigin(hit)}
+                          >
                             Partida
                           </button>
-                          <button type="button" className="press h-9 rounded-full border border-line px-3 text-xs" onClick={() => remember(hit, false)}>
+                          <button
+                            type="button"
+                            className="press h-9 rounded-full border border-line px-3 text-xs"
+                            onClick={() => remember(hit, false)}
+                          >
                             Guardar
                           </button>
                           <button
@@ -406,15 +518,40 @@ export function RutaApp() {
             </div>
 
             {place && hits.length === 0 ? (
-              <div className="pointer-events-none absolute inset-x-0 bottom-0 z-10 p-3">
+              <div
+                ref={mapBottomRef}
+                className="pointer-events-none absolute inset-x-0 bottom-0 z-10 p-3"
+              >
                 <article className="rise pointer-events-auto max-h-64 overflow-y-auto rounded-3xl border border-line bg-surface p-4">
                   <div className="flex items-start gap-3">
                     <div className="min-w-0 flex-1">
                       <p className="text-xs tracking-wide text-muted uppercase">{place.category}</p>
                       <h2 className="font-display text-xl leading-tight">{place.name}</h2>
-                      {place.address ? <p className="mt-1 text-sm text-muted">{place.address}</p> : null}
+                      {cardCompact ? null : place.address ? (
+                        <p className="mt-1 text-sm text-muted">{place.address}</p>
+                      ) : null}
                     </div>
-                    <button type="button" className="press grid size-10 place-items-center rounded-full text-muted" aria-label="Cerrar ficha" onClick={() => setActive(null)}>
+                    <button
+                      type="button"
+                      className="press grid size-10 shrink-0 place-items-center rounded-full text-muted"
+                      aria-expanded={!cardCompact}
+                      aria-label={
+                        cardCompact ? "Ver todos los detalles" : "Minimizar la ficha y ver el mapa"
+                      }
+                      onClick={() => setCardCompact((open) => !open)}
+                    >
+                      {cardCompact ? (
+                        <ChevronUp className="size-5" />
+                      ) : (
+                        <ChevronDown className="size-5" />
+                      )}
+                    </button>
+                    <button
+                      type="button"
+                      className="press grid size-10 shrink-0 place-items-center rounded-full text-muted"
+                      aria-label="Cerrar ficha"
+                      onClick={() => setActive(null)}
+                    >
                       <X className="size-4" />
                     </button>
                   </div>
@@ -428,82 +565,131 @@ export function RutaApp() {
                           : "Elige un punto de partida"}
                   </p>
                   {routeError ? <p className="mt-1 text-sm text-primary">{routeError}</p> : null}
-                  <div className="mt-3 flex rounded-full bg-surface-2 p-1" role="group" aria-label="Modo de viaje">
-                    {MODES.map((item) => {
-                      const Icon = item.icon;
-                      const on = mode === item.id;
-                      return (
-                        <button
-                          key={item.id}
-                          type="button"
-                          aria-pressed={on}
-                          onClick={() => setMode(item.id)}
-                          className={`press inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full text-sm ${on ? "bg-surface text-fg" : "text-muted"}`}
-                        >
-                          <Icon className="size-4" />
-                          {item.label}
-                        </button>
-                      );
-                    })}
-                  </div>
-                  <div className="mt-3 divide-y divide-line">
-                    <ToggleRow
-                      label="Visitado"
-                      hint="Márcalo cuando ya hayas ido"
-                      checked={place.visited}
-                      onChange={() => toggleVisited(place.id)}
-                    />
-                    <ToggleRow
-                      label="Favorito"
-                      hint={place.visited && !place.favorite ? "¿Te gustó? Déjalo en favoritos" : "Para volver cuando quieras"}
-                      checked={place.favorite}
-                      onChange={() => toggleFavorite(place.id)}
-                    />
-                  </div>
-                  <label className="mt-2 block text-xs text-muted" htmlFor="nota-lugar">
-                    Nota
-                    <textarea
-                      id="nota-lugar"
-                      value={place.note}
-                      maxLength={280}
-                      onChange={(event) => setNote(place.id, event.target.value)}
-                      placeholder="El mole, la mesa del fondo, ir en martes…"
-                      className="mt-1 h-16 w-full resize-none rounded-2xl border border-line bg-bg px-3 py-2 text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    />
-                  </label>
-                  {plan && plan.steps.length > 0 ? (
-                    <details className="mt-2">
-                      <summary className="text-sm font-medium text-primary">Indicaciones</summary>
-                      <ol className="mt-2 space-y-2">
-                        {plan.steps.map((step, index) => (
-                          <li key={`${step.text}-${index}`} className="flex gap-2 text-sm">
-                            <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-surface-2 text-xs text-muted">
-                              {index + 1}
-                            </span>
-                            <span>
-                              {step.text}
-                              <span className="text-muted"> · {formatDistance(step.distanceM)}</span>
-                            </span>
-                          </li>
-                        ))}
-                      </ol>
-                    </details>
-                  ) : null}
+                  {cardCompact ? null : (
+                    <>
+                      <div
+                        className="mt-3 flex rounded-full bg-surface-2 p-1"
+                        role="group"
+                        aria-label="Modo de viaje"
+                      >
+                        {MODES.map((item) => {
+                          const Icon = item.icon;
+                          const on = mode === item.id;
+                          return (
+                            <button
+                              key={item.id}
+                              type="button"
+                              aria-pressed={on}
+                              onClick={() => setMode(item.id)}
+                              className={`press inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full text-sm ${on ? "bg-surface text-fg" : "text-muted"}`}
+                            >
+                              <Icon className="size-4" />
+                              {item.label}
+                            </button>
+                          );
+                        })}
+                      </div>
+                      <div className="mt-3 divide-y divide-line">
+                        <ToggleRow
+                          label="Visitado"
+                          hint="Márcalo cuando ya hayas ido"
+                          checked={place.visited}
+                          onChange={() => toggleVisited(place.id)}
+                        />
+                        <ToggleRow
+                          label="Favorito"
+                          hint={
+                            place.visited && !place.favorite
+                              ? "¿Te gustó? Déjalo en favoritos"
+                              : "Para volver cuando quieras"
+                          }
+                          checked={place.favorite}
+                          onChange={() => toggleFavorite(place.id)}
+                        />
+                      </div>
+                      <label className="mt-2 block text-xs text-muted" htmlFor="nota-lugar">
+                        Nota
+                        <textarea
+                          id="nota-lugar"
+                          value={place.note}
+                          maxLength={280}
+                          onChange={(event) => setNote(place.id, event.target.value)}
+                          placeholder="El mole, la mesa del fondo, ir en martes…"
+                          className="mt-1 h-16 w-full resize-none rounded-2xl border border-line bg-bg px-3 py-2 text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                        />
+                      </label>
+                      {plan && plan.steps.length > 0 ? (
+                        <details className="mt-2">
+                          <summary className="text-sm font-medium text-primary">
+                            Indicaciones
+                          </summary>
+                          <ol className="mt-2 space-y-2">
+                            {plan.steps.map((step, index) => (
+                              <li key={`${step.text}-${index}`} className="flex gap-2 text-sm">
+                                <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-surface-2 text-xs text-muted">
+                                  {index + 1}
+                                </span>
+                                <span>
+                                  {step.text}
+                                  <span className="text-muted">
+                                    {" "}
+                                    · {formatDistance(step.distanceM)}
+                                  </span>
+                                </span>
+                              </li>
+                            ))}
+                          </ol>
+                        </details>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={() => removePlace(place.id)}
+                        className="press mt-3 inline-flex h-10 items-center gap-2 text-sm text-muted"
+                      >
+                        <Trash2 className="size-4" />
+                        Quitar de mis lugares
+                      </button>
+                    </>
+                  )}
+                </article>
+              </div>
+            ) : null}
+
+            {origin || place ? (
+              <div
+                className="pointer-events-none absolute right-3 z-10 flex flex-col items-end gap-2"
+                style={{ bottom: mapInsets.bottom + 12 }}
+              >
+                {origin && place ? (
                   <button
                     type="button"
-                    onClick={() => removePlace(place.id)}
-                    className="press mt-3 inline-flex h-10 items-center gap-2 text-sm text-muted"
+                    onClick={() => requestFocus("route")}
+                    aria-pressed={mapFocus === "route"}
+                    className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
                   >
-                    <Trash2 className="size-4" />
-                    Quitar de mis lugares
+                    <RouteIcon className="size-4 text-primary" />
+                    Toda la ruta
                   </button>
-                </article>
+                ) : null}
+                {origin ? (
+                  <button
+                    type="button"
+                    onClick={() => requestFocus("origin")}
+                    aria-pressed={mapFocus === "origin"}
+                    className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
+                  >
+                    <span className="pin-origin" aria-hidden="true" />
+                    Ver partida
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
         </section>
 
-        <aside className={`${tab === "mapa" ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-line bg-bg md:w-96 lg:w-[410px] md:border-l`}>
+        <aside
+          className={`${tab === "mapa" ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-line bg-bg md:w-96 lg:w-[410px] md:border-l`}
+        >
           <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
             {tab === "favoritos" ? (
               <PlaceList
@@ -543,7 +729,10 @@ export function RutaApp() {
         </aside>
       </div>
 
-      <nav className="safe-bottom flex shrink-0 border-t border-line bg-surface md:hidden" aria-label="Secciones">
+      <nav
+        className="safe-bottom flex shrink-0 border-t border-line bg-surface md:hidden"
+        aria-label="Secciones"
+      >
         {TABS.map((item) => {
           const Icon = item.icon;
           const on = tab === item.id;
@@ -686,14 +875,20 @@ function PlaceList({
             <li key={item.id}>
               <article className="rounded-3xl border border-line bg-surface p-4">
                 <div className="flex items-start gap-3">
-                  <button type="button" onClick={() => onOpen(item.id)} className="min-w-0 flex-1 text-left">
+                  <button
+                    type="button"
+                    onClick={() => onOpen(item.id)}
+                    className="min-w-0 flex-1 text-left"
+                  >
                     <p className="truncate font-medium">{item.name}</p>
                     <p className="truncate text-xs text-muted">
                       {item.category}
                       {item.visited ? " · Visitado" : " · Por visitar"}
                       {origin ? ` · ${formatDistance(crowFlies(origin, item))}` : ""}
                     </p>
-                    {item.note ? <p className="mt-1 line-clamp-2 text-sm text-muted">{item.note}</p> : null}
+                    {item.note ? (
+                      <p className="mt-1 line-clamp-2 text-sm text-muted">{item.note}</p>
+                    ) : null}
                   </button>
                   <button
                     type="button"
@@ -705,7 +900,11 @@ function PlaceList({
                     <Heart className={`size-5 ${item.favorite ? "fill-current" : ""}`} />
                   </button>
                 </div>
-                <button type="button" onClick={() => onOpen(item.id)} className="press mt-3 inline-flex h-10 items-center gap-2 text-sm font-medium text-primary">
+                <button
+                  type="button"
+                  onClick={() => onOpen(item.id)}
+                  className="press mt-3 inline-flex h-10 items-center gap-2 text-sm font-medium text-primary"
+                >
                   <Navigation className="size-4" />
                   Cómo llegar
                 </button>
@@ -741,7 +940,9 @@ function SettingsPanel({
       {/* Punto de partida */}
       <section className="rounded-3xl border border-line bg-surface p-4">
         <h2 className="font-medium">Punto de partida</h2>
-        <p className="mt-1 text-sm text-muted">{origin ? origin.label : "Todavía no hay un origen"}</p>
+        <p className="mt-1 text-sm text-muted">
+          {origin ? origin.label : "Todavía no hay un origen"}
+        </p>
         <button
           type="button"
           onClick={onLocate}
@@ -756,14 +957,21 @@ function SettingsPanel({
       <section className="rounded-3xl border border-line bg-surface p-4">
         <h2 className="font-medium">Apariencia</h2>
         <p className="mt-1 text-sm text-muted">
-          Modo actual: <span className="font-medium text-fg capitalize">{theme === "dark" ? "Oscuro" : "Claro"}</span>
+          Modo actual:{" "}
+          <span className="font-medium text-fg capitalize">
+            {theme === "dark" ? "Oscuro" : "Claro"}
+          </span>
         </p>
         <button
           type="button"
           onClick={onToggleTheme}
           className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full border border-line bg-surface-2 px-4 text-sm font-medium text-fg"
         >
-          {theme === "dark" ? <Sun className="size-4 text-primary" /> : <Moon className="size-4 text-primary" />}
+          {theme === "dark" ? (
+            <Sun className="size-4 text-primary" />
+          ) : (
+            <Moon className="size-4 text-primary" />
+          )}
           Cambiar a modo {theme === "dark" ? "claro" : "oscuro"}
         </button>
       </section>
