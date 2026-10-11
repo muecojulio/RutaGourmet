@@ -1,6 +1,7 @@
 import { LocateFixed } from "lucide-react";
 import { PlaceFinder } from "@/components/place-finder";
 import { Sheet } from "@/components/sheet";
+import { Button } from "@/components/ui/button";
 import type { GeoHit } from "@/lib/geo";
 import { usePlaces } from "@/lib/places-store";
 
@@ -47,16 +48,19 @@ export function OriginSheet({
               : `${origin.lat.toFixed(4)}, ${origin.lon.toFixed(4)}`}
           </p>
         ) : null}
-        <button
-          type="button"
+        <Button
+          className="mt-3"
+          loading={locating}
+          leading={<LocateFixed className="size-4" aria-hidden="true" />}
           onClick={onUseDevice}
-          disabled={locating}
-          className="press mt-3 inline-flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg"
         >
-          <LocateFixed className="size-4" />
           {locating ? "Buscando tu ubicación…" : "Usar mi ubicación"}
-        </button>
-        {note ? <p className="mt-2 text-xs text-muted">{note}</p> : null}
+        </Button>
+        {note ? (
+          <p role="status" className="mt-2 text-xs text-muted">
+            {note}
+          </p>
+        ) : null}
       </section>
 
       <div className="mt-4">

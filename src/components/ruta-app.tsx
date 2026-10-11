@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Bike,
-  Bookmark,
   Car,
   ChevronDown,
   ChevronUp,
@@ -18,7 +17,9 @@ import {
   Sun,
   Moon,
   Trash2,
+  UtensilsCrossed,
   X,
+  Bookmark,
 } from "lucide-react";
 import { toast, Toaster } from "sonner";
 import { MapCanvas, type MapFocus } from "@/components/map-canvas";
@@ -28,10 +29,21 @@ import { PrivacyPanel } from "@/components/privacy-panel";
 import { PlaceFinder } from "@/components/place-finder";
 import { OriginSheet } from "@/components/origin-sheet";
 import { AddPlaceSheet } from "@/components/add-place-sheet";
+import { FavoritesView, PlaceList } from "@/components/place-list";
+import { PlaceContext } from "@/components/place-context";
+import { WeatherStrip } from "@/components/weather-strip";
+import { Button } from "@/components/ui/button";
+import { TabBar, TabPanel } from "@/components/ui/tabs";
+import { usePanelSwipe } from "@/components/ui/use-panel-swipe";
+import { Segmented } from "@/components/ui/segmented";
+import { Collapse } from "@/components/ui/collapse";
+import { Field, SwitchRow } from "@/components/ui/field";
+import { inputClass } from "@/components/ui/input";
+import { useMediaQuery } from "@/lib/hooks";
 import { crowFlies, formatDistance, formatDuration } from "@/lib/format";
 import { planRoute, reverseLabel, type GeoHit, type RoutePlan } from "@/lib/geo";
 import { activePlace, usePlaces, type Place, type TravelMode } from "@/lib/places-store";
-import * as Switch from "@radix-ui/react-switch";
+import { cn } from "@/lib/cn";
 
 const MODES: Array<{ id: TravelMode; label: string; icon: typeof Footprints }> = [
   { id: "foot", label: "A pie", icon: Footprints },
@@ -46,6 +58,8 @@ const TABS = [
   { id: "qr", label: "Descargar QR", shortLabel: "QR App", icon: QrCode },
   { id: "privacidad", label: "Privacidad", shortLabel: "Privacidad", icon: ShieldCheck },
 ] as const;
+
+const TAB_IDS = TABS.map((tab) => tab.id) as unknown as string[];
 
 const FALLBACK_ORIGIN = {
   lat: 19.4194,
@@ -86,15 +100,28 @@ export function RutaApp() {
   const [originOpen, setOriginOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
 
+  const isDesktop = useMediaQuery("(min-width: 768px)");
+
   const mapWrapRef = useRef<HTMLDivElement | null>(null);
   const mapTopRef = useRef<HTMLDivElement | null>(null);
   const mapBottomRef = useRef<HTMLDivElement | null>(null);
   const mapActionsRef = useRef<HTMLDivElement | null>(null);
+  const asideScrollRef = useRef<HTMLDivElement | null>(null);
 
   const place = activePlace(places, activeId);
   const placeId = place?.id ?? null;
-  const favorites = useMemo(() => places.filter((item) => item.favorite), [places]);
-  const visitedCount = places.filter((item) => item.visited).length;
+
+  /** On desktop the aside shows the Lugares list beside the map. */
+  const asidePanel = tab === "mapa" ? "lugares" : tab;
+
+  // Swipe between sections on touch (never over the map: the map owns its own
+  // gestures). Tabs stay available as the explicit alternative.
+  const swipe = usePanelSwipe({
+    value: tab,
+    ids: TAB_IDS,
+    onChange: (id) => setTab(id as typeof tab),
+    enabled: !isDesktop && tab !== "mapa",
+  });
 
   const requestFocus = useCallback((target: MapFocus) => {
     setMapFocus(target);
@@ -277,7 +304,9 @@ export function RutaApp() {
       .places.some((item) => item.id === hit.id || same(item, hit));
     savePlace(hit);
     if (go) {
-      toast.success(already ? "Ruta hacia un lugar que ya tenías" : "Lugar guardado y ruta en camino");
+      toast.success(
+        already ? "Ruta hacia un lugar que ya tenías" : "Lugar guardado y ruta en camino",
+      );
     } else {
       toast.success(already ? "Ya estaba en tus lugares" : "Lugar agregado");
     }
@@ -291,38 +320,52 @@ export function RutaApp() {
 
   return (
     <div className="flex h-dvh flex-col bg-bg text-fg">
+      <div className="backdrop-glow" aria-hidden="true" />
       <Toaster theme={theme} position="top-center" />
-      <header className="flex shrink-0 items-center gap-3 border-b border-line px-4 py-3">
-        <div className="min-w-0">
-          <p className="font-display text-2xl leading-none tracking-tight">
-            Ruta<span className="text-primary italic">Gourmet</span>
-          </p>
-          <p className="mt-1 text-xs text-muted">A dónde ir, y cómo llegar</p>
+
+      <header className="relative z-20 flex shrink-0 items-center gap-3 border-b border-line bg-bg/80 px-4 py-3 backdrop-blur">
+        <div className="flex min-w-0 items-center gap-2.5">
+          <span
+            aria-hidden="true"
+            className="grid size-10 shrink-0 rotate-3 place-items-center rounded-2xl bg-gradient-to-br from-primary to-saffron text-primary-fg shadow-[var(--shadow-glow)]"
+          >
+            <UtensilsCrossed className="size-5" />
+          </span>
+          <div className="min-w-0">
+            <p className="font-display text-2xl leading-none tracking-tight">
+              Ruta<span className="text-primary italic">Gourmet</span>
+            </p>
+            <p className="mt-1 text-xs text-muted">A dónde ir, y cómo llegar</p>
+          </div>
         </div>
-        <nav className="ml-auto hidden items-center gap-1 md:flex" aria-label="Secciones">
-          {TABS.map((item) => (
-            <TabButton
-              key={item.id}
-              active={tab === item.id}
-              label={item.label}
-              icon={item.icon}
-              onClick={() => setTab(item.id)}
-            />
-          ))}
-        </nav>
-        <button
-          type="button"
-          className="press ml-auto grid size-11 place-items-center rounded-full border border-line bg-surface text-fg md:ml-0"
+        <TabBar
+          tabs={TABS}
+          value={tab}
+          onChange={(id) => setTab(id as typeof tab)}
+          ariaLabel="Secciones"
+          idBase="app"
+          className="ml-auto hidden md:block"
+        />
+        <Button
+          variant="surface"
+          size="icon"
+          className="ml-auto shrink-0 rounded-full md:ml-2"
           aria-label={theme === "dark" ? "Usar tema claro" : "Usar tema oscuro"}
           onClick={() => setTheme(theme === "dark" ? "light" : "dark")}
         >
           {theme === "dark" ? <Sun className="size-5" /> : <Moon className="size-5" />}
-        </button>
+        </Button>
       </header>
 
       <div className="flex min-h-0 flex-1">
         <section
-          className={`${tab === "mapa" ? "flex" : "hidden md:flex"} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}
+          id="app-panel-mapa"
+          role="tabpanel"
+          aria-labelledby="app-tab-mapa"
+          className={cn(
+            "min-h-0 min-w-0 flex-1 flex-col overflow-hidden",
+            tab === "mapa" ? "flex" : "hidden md:flex",
+          )}
         >
           <div ref={mapWrapRef} className="relative min-h-0 flex-1 overflow-hidden">
             <MapCanvas
@@ -338,7 +381,7 @@ export function RutaApp() {
             />
 
             <div ref={mapTopRef} className="pointer-events-none absolute inset-x-0 top-0 z-10 p-3">
-              <div className="pointer-events-auto rounded-3xl border border-line bg-surface p-2">
+              <div className="pointer-events-auto rounded-3xl border border-line bg-surface/95 p-2 shadow-[var(--shadow-card)] backdrop-blur">
                 <PlaceFinder
                   idPrefix="mapa"
                   variant="bare"
@@ -369,33 +412,38 @@ export function RutaApp() {
                             : "Elegir de dónde sales"}
                       </span>
                     </span>
-                    <MapPin className="size-4 shrink-0 text-primary" />
+                    <MapPin className="size-4 shrink-0 text-primary" aria-hidden="true" />
                   </button>
-                  <button
-                    type="button"
-                    onClick={() => void locate(false)}
+                  <Button
+                    variant="surface"
+                    size="iconSm"
+                    className="text-good"
                     aria-label="Usar mi ubicación como punto de partida"
-                    className="press grid size-10 shrink-0 place-items-center rounded-full border border-line text-good"
+                    onClick={() => void locate(false)}
                   >
-                    <LocateFixed className="size-4" />
-                  </button>
+                    <LocateFixed className="size-4" aria-hidden="true" />
+                  </Button>
                 </div>
                 {geoNote ? (
-                  <div className="rise mt-1 flex items-start gap-2 border-t border-line px-2 pt-2 pb-1 text-xs text-muted">
+                  <div
+                    role="status"
+                    className="rise mt-1 flex items-start gap-2 border-t border-line px-2 pt-2 pb-1 text-xs text-muted"
+                  >
                     <MapPin className="mt-0.5 size-3.5 shrink-0 text-good" aria-hidden="true" />
                     <p className="min-w-0 flex-1 line-clamp-2" title={geoNote}>
                       {geoNote}
                     </p>
                     <button
                       type="button"
-                      className="press -mt-1 grid size-6 shrink-0 place-items-center rounded-full text-fg"
+                      className="press -mt-1 grid size-8 shrink-0 place-items-center rounded-full text-fg"
                       aria-label="Cerrar aviso"
                       onClick={() => setGeoNote(null)}
                     >
-                      <X className="size-3.5" />
+                      <X className="size-3.5" aria-hidden="true" />
                     </button>
                   </div>
                 ) : null}
+                {origin ? <WeatherStrip lat={origin.lat} lon={origin.lon} /> : null}
               </div>
             </div>
 
@@ -404,134 +452,22 @@ export function RutaApp() {
                 ref={mapBottomRef}
                 className="pointer-events-none absolute inset-x-0 bottom-0 z-10 p-3"
               >
-                <article className="rise pointer-events-auto max-h-64 overflow-y-auto rounded-3xl border border-line bg-surface p-4">
-                  <div className="flex items-start gap-3">
-                    <div className="min-w-0 flex-1">
-                      <p className="text-xs tracking-wide text-muted uppercase">{place.category}</p>
-                      <h2 className="font-display text-xl leading-tight">{place.name}</h2>
-                      {cardCompact ? null : place.address ? (
-                        <p className="mt-1 text-sm text-muted">{place.address}</p>
-                      ) : null}
-                    </div>
-                    <button
-                      type="button"
-                      className="press grid size-10 shrink-0 place-items-center rounded-full text-muted"
-                      aria-expanded={!cardCompact}
-                      aria-label={
-                        cardCompact ? "Ver todos los detalles" : "Minimizar la ficha y ver el mapa"
-                      }
-                      onClick={() => setCardCompact((open) => !open)}
-                    >
-                      {cardCompact ? (
-                        <ChevronUp className="size-5" />
-                      ) : (
-                        <ChevronDown className="size-5" />
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      className="press grid size-10 shrink-0 place-items-center rounded-full text-muted"
-                      aria-label="Cerrar ficha"
-                      onClick={() => setActive(null)}
-                    >
-                      <X className="size-4" />
-                    </button>
-                  </div>
-                  <p className="mt-2 text-sm">
-                    {routing
-                      ? "Trazando la ruta…"
-                      : plan
-                        ? `${formatDuration(plan.durationS)} · ${formatDistance(plan.distanceM)}`
-                        : origin
-                          ? `${formatDistance(crowFlies(origin, place))} en línea recta`
-                          : "Elige un punto de partida"}
-                  </p>
-                  {routeError ? <p className="mt-1 text-sm text-primary">{routeError}</p> : null}
-                  {cardCompact ? null : (
-                    <>
-                      <div
-                        className="mt-3 flex rounded-full bg-surface-2 p-1"
-                        role="group"
-                        aria-label="Modo de viaje"
-                      >
-                        {MODES.map((item) => {
-                          const Icon = item.icon;
-                          const on = mode === item.id;
-                          return (
-                            <button
-                              key={item.id}
-                              type="button"
-                              aria-pressed={on}
-                              onClick={() => setMode(item.id)}
-                              className={`press inline-flex h-9 flex-1 items-center justify-center gap-1 rounded-full text-sm ${on ? "bg-surface text-fg" : "text-muted"}`}
-                            >
-                              <Icon className="size-4" />
-                              {item.label}
-                            </button>
-                          );
-                        })}
-                      </div>
-                      <div className="mt-3 divide-y divide-line">
-                        <ToggleRow
-                          label="Visitado"
-                          hint="Márcalo cuando ya hayas ido"
-                          checked={place.visited}
-                          onChange={() => toggleVisited(place.id)}
-                        />
-                        <ToggleRow
-                          label="Favorito"
-                          hint={
-                            place.visited && !place.favorite
-                              ? "¿Te gustó? Déjalo en favoritos"
-                              : "Para volver cuando quieras"
-                          }
-                          checked={place.favorite}
-                          onChange={() => toggleFavorite(place.id)}
-                        />
-                      </div>
-                      <label className="mt-2 block text-xs text-muted" htmlFor="nota-lugar">
-                        Nota
-                        <textarea
-                          id="nota-lugar"
-                          value={place.note}
-                          maxLength={280}
-                          onChange={(event) => setNote(place.id, event.target.value)}
-                          placeholder="El mole, la mesa del fondo, ir en martes…"
-                          className="mt-1 h-16 w-full resize-none rounded-2xl border border-line bg-bg px-3 py-2 text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        />
-                      </label>
-                      {plan && plan.steps.length > 0 ? (
-                        <details className="mt-2">
-                          <summary className="text-sm font-medium text-primary">Indicaciones</summary>
-                          <ol className="mt-2 space-y-2">
-                            {plan.steps.map((step, index) => (
-                              <li key={`${step.text}-${index}`} className="flex gap-2 text-sm">
-                                <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-surface-2 text-xs text-muted">
-                                  {index + 1}
-                                </span>
-                                <span>
-                                  {step.text}
-                                  <span className="text-muted">
-                                    {" "}
-                                    · {formatDistance(step.distanceM)}
-                                  </span>
-                                </span>
-                              </li>
-                            ))}
-                          </ol>
-                        </details>
-                      ) : null}
-                      <button
-                        type="button"
-                        onClick={() => removePlace(place.id)}
-                        className="press mt-3 inline-flex h-10 items-center gap-2 text-sm text-muted"
-                      >
-                        <Trash2 className="size-4" />
-                        Quitar de mis lugares
-                      </button>
-                    </>
-                  )}
-                </article>
+                <PlaceCard
+                  place={place}
+                  origin={origin}
+                  compact={cardCompact}
+                  onToggleCompact={() => setCardCompact((open) => !open)}
+                  onClose={() => setActive(null)}
+                  mode={mode}
+                  onMode={setMode}
+                  plan={plan}
+                  routing={routing}
+                  routeError={routeError}
+                  onVisited={() => toggleVisited(place.id)}
+                  onFavorite={() => toggleFavorite(place.id)}
+                  onNote={(note) => setNote(place.id, note)}
+                  onRemove={() => removePlace(place.id)}
+                />
               </div>
             ) : null}
 
@@ -540,88 +476,124 @@ export function RutaApp() {
               className="pointer-events-none absolute right-3 z-10 flex flex-col items-end gap-2"
               style={{ bottom: mapInsets.bottom + 12 }}
             >
-              <button
-                type="button"
+              <Button
+                size="md"
+                className="pointer-events-auto rounded-full shadow-md"
+                leading={<Plus className="size-4" aria-hidden="true" />}
                 onClick={() => setAddOpen(true)}
-                className="press pointer-events-auto inline-flex h-11 items-center gap-2 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg shadow-md"
               >
-                <Plus className="size-4" />
                 Agregar lugar
-              </button>
+              </Button>
               {origin && place ? (
-                <button
-                  type="button"
-                  onClick={() => requestFocus("route")}
+                <Button
+                  variant="surface"
+                  size="sm"
                   aria-pressed={mapFocus === "route"}
-                  className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
+                  className="pointer-events-auto rounded-full shadow-md"
+                  leading={<RouteIcon className="size-4 text-primary" aria-hidden="true" />}
+                  onClick={() => requestFocus("route")}
                 >
-                  <RouteIcon className="size-4 text-primary" />
                   Toda la ruta
-                </button>
+                </Button>
               ) : null}
               {origin ? (
-                <button
-                  type="button"
-                  onClick={() => requestFocus("origin")}
+                <Button
+                  variant="surface"
+                  size="sm"
                   aria-pressed={mapFocus === "origin"}
-                  className="press pointer-events-auto inline-flex h-10 items-center gap-2 rounded-full border border-line bg-surface px-3 text-xs font-medium text-fg shadow-md"
+                  className="pointer-events-auto rounded-full shadow-md"
+                  leading={<span className="pin-origin" aria-hidden="true" />}
+                  onClick={() => requestFocus("origin")}
                 >
-                  <span className="pin-origin" aria-hidden="true" />
                   Ver partida
-                </button>
+                </Button>
               ) : null}
             </div>
           </div>
         </section>
 
         <aside
-          className={`${tab === "mapa" ? "hidden md:flex" : "flex"} min-h-0 w-full shrink-0 flex-col border-line bg-bg md:w-96 lg:w-[410px] md:border-l`}
+          className={cn(
+            "min-h-0 w-full shrink-0 flex-col border-line bg-bg md:flex md:w-96 md:border-l lg:w-[410px]",
+            tab === "mapa" ? "hidden" : "flex",
+          )}
         >
-          <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-            {tab === "favoritos" ? (
-              <>
-                <PlaceList
-                  title="Favoritos"
-                  intro={
-                    places.length === 0
-                      ? "Los lugares que te gustaron se quedan en este teléfono."
-                      : `${favorites.length} de ${places.length} lugares, y ${visitedCount} ya visitados.`
-                  }
-                  empty="Todavía no hay favoritos. Abre un lugar en el mapa y enciende el interruptor, o toca el corazón de la lista."
-                  items={favorites}
-                  origin={origin}
-                  onOpen={(id) => setActive(id)}
-                  onFavorite={toggleFavorite}
-                />
-                <VisitedSuggestions
-                  places={places}
-                  onOpen={(id) => setActive(id)}
-                  onFavorite={toggleFavorite}
-                />
-              </>
-            ) : tab === "qr" ? (
-              <QrDownloadPanel />
-            ) : tab === "privacidad" ? (
-              <PrivacyPanel onNavigate={(target) => setTab(target)} />
-            ) : (
+          <div
+            ref={asideScrollRef}
+            {...swipe.handlers}
+            style={swipe.dragStyle}
+            className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4 py-4"
+          >
+            <TabPanel
+              idBase="app"
+              tabId="lugares"
+              labelledBy="heading-lugares"
+              active={asidePanel === "lugares"}
+              className="pb-6"
+            >
               <PlaceList
+                headingId="heading-lugares"
                 title="Lugares"
+                icon={<Bookmark className="size-7 text-accent" aria-hidden="true" />}
                 intro="Todo lo que quieres visitar, con visita y favorito por separado."
                 empty="Agrega un restaurante desde el mapa con el buscador o con Cerca."
                 items={places}
                 origin={origin}
                 onOpen={(id) => setActive(id)}
                 onFavorite={toggleFavorite}
+                onRemove={(id) => {
+                  removePlace(id);
+                  toast.success("Lugar quitado");
+                }}
                 onAdd={() => setAddOpen(true)}
                 showFilters
               />
-            )}
+            </TabPanel>
+            <TabPanel
+              idBase="app"
+              tabId="favoritos"
+              labelledBy="heading-favoritos"
+              active={asidePanel === "favoritos"}
+              className="pb-6"
+            >
+              <FavoritesView
+                headingId="heading-favoritos"
+                places={places}
+                origin={origin}
+                onOpen={(id) => setActive(id)}
+                onFavorite={toggleFavorite}
+                onRemove={(id) => {
+                  removePlace(id);
+                  toast.success("Lugar quitado");
+                }}
+              />
+            </TabPanel>
+            <TabPanel
+              idBase="app"
+              tabId="qr"
+              labelledBy="heading-qr"
+              active={asidePanel === "qr"}
+              className="pb-6"
+            >
+              <QrDownloadPanel />
+            </TabPanel>
+            <TabPanel
+              idBase="app"
+              tabId="privacidad"
+              labelledBy="heading-privacidad"
+              active={asidePanel === "privacidad"}
+              className="pb-6"
+            >
+              <div id="heading-privacidad">
+                <PrivacyPanel onNavigate={(target) => setTab(target)} />
+              </div>
+            </TabPanel>
           </div>
         </aside>
       </div>
 
       <nav
-        className="safe-bottom flex shrink-0 border-t border-line bg-surface md:hidden"
+        className="safe-bottom relative z-20 flex shrink-0 border-t border-line bg-surface/95 backdrop-blur md:hidden"
         aria-label="Secciones"
       >
         {TABS.map((item) => {
@@ -632,13 +604,29 @@ export function RutaApp() {
               key={item.id}
               type="button"
               onClick={() => setTab(item.id)}
-              className={`press flex h-16 flex-1 min-w-0 flex-col items-center justify-center gap-1 text-[11px] sm:text-xs ${
-                on ? "text-primary font-semibold" : "text-muted"
-              }`}
+              className={cn(
+                "press relative flex h-16 min-w-0 flex-1 flex-col items-center justify-center gap-1 text-[11px] sm:text-xs",
+                on ? "text-primary font-semibold" : "text-muted",
+              )}
               aria-current={on ? "page" : undefined}
+              aria-controls={`app-panel-${item.id === "mapa" ? "mapa" : item.id}`}
             >
-              <Icon className="size-5 shrink-0" />
-              <span className="truncate max-w-full px-0.5">{item.shortLabel}</span>
+              {/* Active pill that scales in from the top edge. */}
+              <span
+                aria-hidden="true"
+                className={cn(
+                  "absolute top-0 h-1 w-8 origin-center rounded-full bg-primary transition-transform duration-200",
+                  on ? "scale-x-100" : "scale-x-0",
+                )}
+              />
+              <Icon
+                className={cn(
+                  "size-5 shrink-0 transition-transform duration-200",
+                  on && "scale-110",
+                )}
+                aria-hidden="true"
+              />
+              <span className="max-w-full truncate px-0.5">{item.shortLabel}</span>
             </button>
           );
         })}
@@ -670,226 +658,183 @@ function same(a: { lat: number; lon: number }, b: { lat: number; lon: number }) 
   return Math.abs(a.lat - b.lat) < 0.00025 && Math.abs(a.lon - b.lon) < 0.00025;
 }
 
-function TabButton({
-  active,
-  label,
-  icon: Icon,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  icon: typeof MapIcon;
-  onClick: () => void;
-}) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`press inline-flex h-10 items-center gap-2 rounded-full px-3 text-sm ${active ? "bg-surface-2 text-fg" : "text-muted"}`}
-      aria-current={active ? "page" : undefined}
-    >
-      <Icon className="size-4" />
-      {label}
-    </button>
-  );
-}
-
-function ToggleRow({
-  label,
-  hint,
-  checked,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  checked: boolean;
-  onChange: () => void;
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 py-2">
-      <div>
-        <p className="text-sm font-medium">{label}</p>
-        <p className="text-xs text-muted">{hint}</p>
-      </div>
-      <Switch.Root
-        checked={checked}
-        onCheckedChange={() => onChange()}
-        aria-label={label}
-        className="press relative h-7 w-12 shrink-0 rounded-full bg-line data-[state=checked]:bg-primary"
-      >
-        <Switch.Thumb className="block size-5 translate-x-1 rounded-full bg-surface transition-transform data-[state=checked]:translate-x-6 data-[state=checked]:bg-primary-fg" />
-      </Switch.Root>
-    </div>
-  );
-}
-
-/**
- * Marking a place as visited is the moment you know whether you liked it, so
- * the Favoritos tab offers the ones that are still missing the heart.
- */
-function VisitedSuggestions({
-  places,
-  onOpen,
-  onFavorite,
-}: {
-  places: Place[];
-  onOpen: (id: string) => void;
-  onFavorite: (id: string) => void;
-}) {
-  const pending = places.filter((item) => item.visited && !item.favorite);
-  if (pending.length === 0) return null;
-
-  return (
-    <section className="mt-6">
-      <h2 className="text-sm font-semibold tracking-wide text-muted uppercase">
-        Visitados que te pueden gustar
-      </h2>
-      <p className="mt-1 text-xs text-muted">
-        Ya fuiste. Si te gustaron, agrégalos a favoritos para tenerlos a mano.
-      </p>
-      <ul className="mt-3 space-y-2">
-        {pending.map((item) => (
-          <li
-            key={item.id}
-            className="flex items-center gap-3 rounded-2xl border border-line bg-surface p-3"
-          >
-            <button
-              type="button"
-              onClick={() => onOpen(item.id)}
-              className="min-w-0 flex-1 text-left"
-            >
-              <span className="block truncate text-sm font-medium">{item.name}</span>
-              <span className="block truncate text-xs text-muted">
-                {item.category} · Visitado
-              </span>
-            </button>
-            <button
-              type="button"
-              onClick={() => onFavorite(item.id)}
-              className="press inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full bg-primary px-3 text-xs font-medium text-primary-fg"
-            >
-              <Heart className="size-4" />
-              Favorito
-            </button>
-          </li>
-        ))}
-      </ul>
-    </section>
-  );
-}
-
-function PlaceList({
-  title,
-  intro,
-  empty,
-  items,
+/** The floating detail card over the map for the active place. */
+function PlaceCard({
+  place,
   origin,
-  onOpen,
+  compact,
+  onToggleCompact,
+  onClose,
+  mode,
+  onMode,
+  plan,
+  routing,
+  routeError,
+  onVisited,
   onFavorite,
-  onAdd,
-  showFilters = false,
+  onNote,
+  onRemove,
 }: {
-  title: string;
-  intro: string;
-  empty: string;
-  items: Place[];
+  place: Place;
   origin: { lat: number; lon: number } | null;
-  onOpen: (id: string) => void;
-  onFavorite: (id: string) => void;
-  onAdd?: () => void;
-  showFilters?: boolean;
+  compact: boolean;
+  onToggleCompact: () => void;
+  onClose: () => void;
+  mode: TravelMode;
+  onMode: (mode: TravelMode) => void;
+  plan: RoutePlan | null;
+  routing: boolean;
+  routeError: string | null;
+  onVisited: () => void;
+  onFavorite: () => void;
+  onNote: (note: string) => void;
+  onRemove: () => void;
 }) {
-  const [filter, setFilter] = useState<"todos" | "pendientes" | "visitados">("todos");
-  const visible = items.filter((item) => {
-    if (!showFilters || filter === "todos") return true;
-    if (filter === "visitados") return item.visited;
-    return !item.visited;
-  });
-
   return (
-    <div className="rise">
-      <h1 className="font-display text-3xl leading-none">{title}</h1>
-      <p className="mt-2 text-sm text-muted">{intro}</p>
-      {onAdd ? (
-        <button
-          type="button"
-          onClick={onAdd}
-          className="press mt-4 inline-flex h-12 w-full items-center justify-center gap-2 rounded-full bg-primary text-sm font-medium text-primary-fg"
+    <article
+      className="rise pointer-events-auto max-h-72 overflow-y-auto overscroll-contain rounded-3xl border border-line bg-surface/95 p-4 shadow-[var(--shadow-pop)] backdrop-blur"
+      aria-label={`Lugar: ${place.name}`}
+      data-no-swipe
+    >
+      <div className="flex items-start gap-3">
+        <div className="min-w-0 flex-1">
+          <p className="text-xs tracking-wide text-muted uppercase">{place.category}</p>
+          <h2 className="font-display text-xl leading-tight">{place.name}</h2>
+          {compact ? null : place.address ? (
+            <p className="mt-1 text-sm text-muted">{place.address}</p>
+          ) : null}
+        </div>
+        <Button
+          variant="ghost"
+          size="iconSm"
+          aria-expanded={!compact}
+          aria-label={compact ? "Ver todos los detalles" : "Minimizar la ficha y ver el mapa"}
+          onClick={onToggleCompact}
         >
-          <Plus className="size-4" />
-          Agregar lugar
-        </button>
+          {compact ? (
+            <ChevronUp className="size-5" aria-hidden="true" />
+          ) : (
+            <ChevronDown className="size-5" aria-hidden="true" />
+          )}
+        </Button>
+        <Button variant="ghost" size="iconSm" aria-label="Cerrar ficha" onClick={onClose}>
+          <X className="size-4" aria-hidden="true" />
+        </Button>
+      </div>
+
+      <p className="mt-2 text-sm" aria-live="polite" role={routing ? "status" : undefined}>
+        {routing ? (
+          <span className="inline-flex items-center gap-1.5 text-muted">
+            <span className="size-2 rounded-full bg-primary pulse-soft" aria-hidden="true" />
+            Trazando la ruta…
+          </span>
+        ) : plan ? (
+          <>
+            <strong className="text-primary">{formatDuration(plan.durationS)}</strong>
+            <span className="text-muted"> · {formatDistance(plan.distanceM)}</span>
+          </>
+        ) : origin ? (
+          <span className="text-muted">
+            {formatDistance(crowFlies(origin, place))} en línea recta
+          </span>
+        ) : (
+          <span className="text-muted">Elige un punto de partida</span>
+        )}
+      </p>
+      {routeError ? (
+        <p role="alert" className="wiggle mt-1 text-sm text-primary">
+          ⚠ {routeError}
+        </p>
       ) : null}
-      {showFilters ? (
-        <div className="mt-4 flex gap-2">
-          {(
-            [
-              ["todos", "Todos"],
-              ["pendientes", "Por visitar"],
-              ["visitados", "Visitados"],
-            ] as const
-          ).map(([id, label]) => (
-            <button
-              key={id}
-              type="button"
-              onClick={() => setFilter(id)}
-              className={`press h-9 rounded-full px-3 text-sm ${filter === id ? "bg-primary text-primary-fg" : "border border-line text-muted"}`}
-              aria-pressed={filter === id}
+
+      {compact ? null : (
+        <>
+          <Segmented
+            label="Modo de viaje"
+            className="mt-3"
+            size="sm"
+            value={mode}
+            onChange={onMode}
+            options={MODES.map((item) => {
+              const Icon = item.icon;
+              return {
+                id: item.id,
+                label: item.label,
+                icon: <Icon className="size-4" aria-hidden="true" />,
+              };
+            })}
+          />
+
+          <div className="mt-3 divide-y divide-line">
+            <SwitchRow
+              label="Visitado"
+              hint="Márcalo cuando ya hayas ido"
+              checked={place.visited}
+              onToggle={onVisited}
+            />
+            <SwitchRow
+              label="Favorito"
+              hint={
+                place.visited && !place.favorite
+                  ? "¿Te gustó? Déjalo en favoritos"
+                  : "Para volver cuando quieras"
+              }
+              checked={place.favorite}
+              onToggle={onFavorite}
+            />
+          </div>
+
+          <Field label="Nota" hint="El mole, la mesa del fondo, ir en martes…" className="mt-2">
+            {({ id, describedBy, invalid }) => (
+              <textarea
+                id={id}
+                aria-invalid={invalid || undefined}
+                aria-describedby={describedBy}
+                value={place.note}
+                maxLength={280}
+                onChange={(event) => onNote(event.target.value)}
+                placeholder="El mole, la mesa del fondo, ir en martes…"
+                className={cn(inputClass, "h-16 resize-none py-2")}
+              />
+            )}
+          </Field>
+
+          {plan && plan.steps.length > 0 ? (
+            <Collapse
+              title="Indicaciones"
+              subtitle={`${plan.steps.length} pasos`}
+              className="mt-2"
+              icon={<Navigation className="size-4" />}
             >
-              {label}
-            </button>
-          ))}
-        </div>
-      ) : null}
-      {visible.length === 0 ? (
-        <div className="mt-8 rounded-3xl border border-dashed border-line px-4 py-10 text-center">
-          <Bookmark className="mx-auto size-6 text-muted" />
-          <p className="mt-3 text-sm text-muted">{empty}</p>
-        </div>
-      ) : (
-        <ul className="mt-4 space-y-3">
-          {visible.map((item) => (
-            <li key={item.id}>
-              <article className="rounded-3xl border border-line bg-surface p-4">
-                <div className="flex items-start gap-3">
-                  <button
-                    type="button"
-                    onClick={() => onOpen(item.id)}
-                    className="min-w-0 flex-1 text-left"
-                  >
-                    <p className="truncate font-medium">{item.name}</p>
-                    <p className="truncate text-xs text-muted">
-                      {item.category}
-                      {item.visited ? " · Visitado" : " · Por visitar"}
-                      {origin ? ` · ${formatDistance(crowFlies(origin, item))}` : ""}
-                    </p>
-                    {item.note ? (
-                      <p className="mt-1 line-clamp-2 text-sm text-muted">{item.note}</p>
-                    ) : null}
-                  </button>
-                  <button
-                    type="button"
-                    aria-label={item.favorite ? "Quitar de favoritos" : "Agregar a favoritos"}
-                    aria-pressed={item.favorite}
-                    onClick={() => onFavorite(item.id)}
-                    className={`press grid size-11 place-items-center rounded-full border border-line ${item.favorite ? "text-primary" : "text-muted"}`}
-                  >
-                    <Heart className={`size-5 ${item.favorite ? "fill-current" : ""}`} />
-                  </button>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onOpen(item.id)}
-                  className="press mt-3 inline-flex h-10 items-center gap-2 text-sm font-medium text-primary"
-                >
-                  <Navigation className="size-4" />
-                  Cómo llegar
-                </button>
-              </article>
-            </li>
-          ))}
-        </ul>
+              <ol className="space-y-2">
+                {plan.steps.map((step, index) => (
+                  <li key={`${step.text}-${index}`} className="flex gap-2 text-sm">
+                    <span className="mt-0.5 grid size-5 shrink-0 place-items-center rounded-full bg-surface-2 text-xs text-muted">
+                      {index + 1}
+                    </span>
+                    <span>
+                      {step.text}
+                      <span className="text-muted"> · {formatDistance(step.distanceM)}</span>
+                    </span>
+                  </li>
+                ))}
+              </ol>
+            </Collapse>
+          ) : null}
+
+          <PlaceContext lat={place.lat} lon={place.lon} />
+
+          <Button
+            variant="ghost"
+            size="sm"
+            className="-ml-2 mt-3 text-muted hover:text-danger"
+            leading={<Trash2 className="size-4" aria-hidden="true" />}
+            onClick={onRemove}
+          >
+            Quitar de mis lugares
+          </Button>
+        </>
       )}
-    </div>
+    </article>
   );
 }

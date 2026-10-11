@@ -2,6 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Navigation, Plus, Search, X } from "lucide-react";
 import { nearbyPlaces, rankByDistance, searchPlaces, type GeoHit } from "@/lib/geo";
 import { usePlaces } from "@/lib/places-store";
+import { Button } from "@/components/ui/button";
+import { categoryEmoji } from "@/lib/category-emoji";
+import { crowFlies, formatDistance } from "@/lib/format";
 
 export type PlaceFinderProps = {
   /** Unique prefix so two finders mounted at once never share an input id. */
@@ -123,8 +126,7 @@ export function PlaceFinder({
       if (result.ok) {
         setHits(result.data);
         setSearched(true);
-        if (result.data.length === 0)
-          setError("No hay restaurantes marcados cerca de este punto.");
+        if (result.data.length === 0) setError("No hay restaurantes marcados cerca de este punto.");
       } else setError(result.error);
     } catch {
       if (requestRef.current === id) setError("No pude consultar lugares cercanos.");
@@ -156,7 +158,10 @@ export function PlaceFinder({
       >
         <div className="flex items-center gap-2">
           <div className="relative min-w-0 flex-1">
-            <Search className="pointer-events-none absolute top-1/2 left-3 size-4 -translate-y-1/2 text-muted" />
+            <Search
+              className="pointer-events-none absolute top-1/2 left-3.5 size-4 -translate-y-1/2 text-muted"
+              aria-hidden="true"
+            />
             <label className="sr-only" htmlFor={`${idPrefix}-q`}>
               {placeholder}
             </label>
@@ -165,7 +170,7 @@ export function PlaceFinder({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               placeholder={placeholder}
-              className="h-11 w-full rounded-full border border-line bg-bg pr-10 pl-10 text-sm text-fg outline-none focus-visible:ring-2 focus-visible:ring-primary"
+              className="h-11 w-full rounded-full border border-line bg-bg pr-10 pl-10 text-sm text-fg outline-none transition-shadow placeholder:text-muted/70 focus-visible:border-primary/60 focus-visible:shadow-[0_0_0_3px_color-mix(in_srgb,var(--color-primary)_18%,transparent)]"
               autoComplete="off"
               autoFocus={autoFocus}
             />
@@ -174,70 +179,86 @@ export function PlaceFinder({
                 type="button"
                 onClick={clear}
                 aria-label="Limpiar búsqueda"
-                className="press absolute top-1/2 right-1 grid size-9 -translate-y-1/2 place-items-center rounded-full text-muted"
+                className="press absolute top-1/2 right-1 grid size-9 -translate-y-1/2 place-items-center rounded-full text-muted hover:text-fg"
               >
-                <X className="size-4" />
+                <X className="size-4" aria-hidden="true" />
               </button>
             ) : null}
           </div>
           {showNearby ? (
-            <button
+            <Button
               type="button"
+              loading={busy}
+              leading={<Plus className="size-4" aria-hidden="true" />}
               onClick={() => void runNearby()}
-              className="press inline-flex h-11 shrink-0 items-center gap-1 rounded-full bg-primary px-4 text-sm font-medium text-primary-fg"
+              className="shrink-0"
             >
-              <Plus className="size-4" />
               Cerca
-            </button>
+            </Button>
           ) : null}
         </div>
       </form>
-      {busy ? <p className="mt-2 px-2 text-xs text-muted">Buscando en el mapa…</p> : null}
-      {error ? (
-        <p className="mt-2 rounded-2xl bg-surface-2 px-3 py-2 text-sm text-fg">{error}</p>
+
+      {/* Result announcements for assistive tech. */}
+      <p aria-live="polite" className="sr-only">
+        {busy
+          ? "Buscando en el mapa…"
+          : searched && !error
+            ? `${hits.length} ${hits.length === 1 ? "resultado" : "resultados"}`
+            : ""}
+      </p>
+
+      {busy && !showNearby ? (
+        <p className="mt-2 px-2 text-xs text-muted">Buscando en el mapa…</p>
       ) : null}
-      {!busy && !error && searched && hits.length === 0 ? (
-        <p className="mt-2 px-2 text-xs text-muted">
-          Nada por aquí. Prueba con el nombre del restaurante o del barrio.
+      {error ? (
+        <p
+          role="alert"
+          className="wiggle mt-2 flex items-start gap-1.5 rounded-2xl bg-surface-2 px-3 py-2 text-sm text-fg"
+        >
+          <span aria-hidden="true">🤔</span>
+          <span>{error}</span>
         </p>
       ) : null}
       {hits.length > 0 ? (
-        <ul className="rise mt-2 max-h-64 space-y-2 overflow-y-auto rounded-3xl border border-line bg-surface p-2">
+        <ul className="rise mt-2 max-h-72 space-y-1.5 overflow-y-auto overscroll-contain rounded-3xl border border-line bg-surface p-1.5">
           {hits.map((hit) => (
-            <li key={hit.id} className="rounded-2xl bg-bg px-3 py-2">
-              <p className="truncate text-sm font-medium">{hit.name}</p>
-              <p className="truncate text-xs text-muted">
-                {hit.category}
-                {hit.address ? ` · ${hit.address}` : ""}
-              </p>
+            <li key={hit.id} className="rounded-2xl bg-bg px-3 py-2.5">
+              <div className="flex items-start gap-2.5">
+                <span
+                  aria-hidden="true"
+                  className="grid size-9 shrink-0 place-items-center rounded-xl bg-surface-2 text-base"
+                >
+                  {categoryEmoji(hit.category)}
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium">{hit.name}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {hit.category}
+                    {origin ? ` · ${formatDistance(crowFlies(origin, hit))}` : ""}
+                    {hit.address ? ` · ${hit.address}` : ""}
+                  </span>
+                </span>
+              </div>
               <div className="mt-2 flex flex-wrap gap-2">
                 {onOrigin ? (
-                  <button
-                    type="button"
-                    className="press h-9 rounded-full border border-line px-3 text-xs"
-                    onClick={() => pick(onOrigin, hit)}
-                  >
+                  <Button variant="outline" size="sm" onClick={() => pick(onOrigin, hit)}>
                     Partida
-                  </button>
+                  </Button>
                 ) : null}
                 {onSave ? (
-                  <button
-                    type="button"
-                    className="press h-9 rounded-full border border-line px-3 text-xs"
-                    onClick={() => onSave(hit)}
-                  >
+                  <Button variant="outline" size="sm" onClick={() => onSave(hit)}>
                     Guardar
-                  </button>
+                  </Button>
                 ) : null}
                 {onPick ? (
-                  <button
-                    type="button"
-                    className="press inline-flex h-9 items-center gap-1 rounded-full bg-primary px-3 text-xs font-medium text-primary-fg"
+                  <Button
+                    size="sm"
+                    leading={<PickIcon className="size-3.5" aria-hidden="true" />}
                     onClick={() => pick(onPick, hit)}
                   >
-                    <PickIcon className="size-3.5" />
                     {pickLabel}
-                  </button>
+                  </Button>
                 ) : null}
               </div>
             </li>
